@@ -1,0 +1,278 @@
+'use client';
+
+import { useState, useRef, useEffect } from 'react';
+import { useForm } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { inventoryItemSchema, InventoryItemInput, CONDITIONS, STORES, CATEGORIES } from '@/lib/schema';
+import { useLiff, sendConfirmationToChat, closeLiffWindow } from '@/lib/liff-client';
+
+const BRANDS = ['Rolex', 'Chanel', 'Hermès', 'Cartier', 'Louis Vuitton', 'Patek Philippe', 'Van Cleef & Arpels', 'Other'];
+
+type Step = 'photo' | 'details' | 'ticket';
+
+export default function RegisterPage() {
+  const liff = useLiff();
+  const [step, setStep] = useState<Step>('photo');
+  const [photo, setPhoto] = useState<string | null>(null);
+  const [submitted, setSubmitted] = useState<InventoryItemInput | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  const {
+    register,
+    handleSubmit,
+    formState: { errors },
+    setValue,
+    watch,
+  } = useForm<InventoryItemInput>({
+    resolver: zodResolver(inventoryItemSchema),
+    defaultValues: { lineUserId: '', category: undefined, condition: undefined, store: undefined },
+  });
+
+  // Keep lineUserId in the form in sync with the resolved LIFF profile.
+  if (liff.userId && watch('lineUserId') !== liff.userId) {
+    setValue('lineUserId', liff.userId);
+  }
+
+  // Pre-fill (not lock) the store field for known staff, so registering
+  // at your usual location doesn't require picking it every single time.
+  useEffect(() => {
+    if (!liff.userId) return;
+    fetch(`/api/staff?lineUserId=${encodeURIComponent(liff.userId)}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.store) setValue('store', data.store);
+      })
+      .catch(() => {
+        /* no staff record yet — form just falls back to asking */
+      });
+  }, [liff.userId, setValue]);
+
+  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setPhoto(reader.result as string);
+      setValue('photoDataUrl', reader.result as string);
+      setStep('details');
+    };
+    reader.readAsDataURL(file);
+  }
+
+  async function onSubmit(data: InventoryItemInput) {
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/inventory', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error('Registration failed');
+      setSubmitted(data);
+      setStep('ticket');
+      await sendConfirmationToChat(`Registered ${data.productName} (${data.brand}) — ¥${data.price.toLocaleString()}`);
+    } catch (err) {
+      console.error(err);
+      alert('Could not register the item. Check your connection and try again.');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  if (liff.error) {
+    return <ErrorScreen message={liff.error} />;
+  }
+
+  if (!liff.ready) {
+    return <LoadingScreen />;
+  }
+
+  return (
+    <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-10 pt-8">
+      <Header staffName={liff.displayName} step={step} />
+
+      {step === 'photo' && (
+        <section className="mt-8 flex flex-1 flex-col items-center justify-center gap-6 text-center">
+          <div className="rounded-tag border border-dashed border-hairline p-10">
+            <p className="font-display text-xl italic text-brassLight">New item</p>
+            <p className="mt-2 text-sm text-muted">Photograph the piece to begin the appraisal ticket.</p>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" />
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="w-full rounded-tag bg-brass py-3 font-body text-sm font-medium text-ink transition hover:bg-brassLight"
+          >
+            Take photo
+          </button>
+          <button onClick={() => setStep('details')} className="text-xs text-muted underline underline-offset-4">
+            Skip photo for now
+          </button>
+        </section>
+      )}
+
+      {step === 'details' && (
+        <form onSubmit={handleSubmit(onSubmit)} className="mt-6 flex flex-1 flex-col gap-5">
+          {photo && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={photo} alt="Item" className="h-40 w-full rounded-tag object-cover" />
+          )}
+
+          <Field label="Category" error={errors.category?.message}>
+            <div className="grid grid-cols-2 gap-2">
+              {CATEGORIES.map((c) => (
+                <label key={c} className="cursor-pointer">
+                  <input type="radio" value={c} {...register('category')} className="peer sr-only" />
+                  <div className="rounded-tag border border-hairline py-2.5 text-center text-sm text-muted peer-checked:border-brass peer-checked:bg-brass/10 peer-checked:text-brassLight">
+                    {c}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Brand" error={errors.brand?.message}>
+            <select {...register('brand')} className={inputCls}>
+              <option value="">Select brand</option>
+              {BRANDS.map((b) => (
+                <option key={b} value={b}>
+                  {b}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Item name" error={errors.productName?.message}>
+            <input {...register('productName')} placeholder="e.g. Submariner Date 41mm" className={inputCls} />
+          </Field>
+
+          <Field label="Price (¥)" error={errors.price?.message}>
+            <input
+              type="number"
+              inputMode="numeric"
+              {...register('price', { valueAsNumber: true })}
+              placeholder="1200000"
+              className={inputCls}
+            />
+          </Field>
+
+          <Field label="Condition grade" error={errors.condition?.message}>
+            <div className="grid grid-cols-4 gap-2">
+              {CONDITIONS.map((c) => (
+                <label key={c} className="cursor-pointer">
+                  <input type="radio" value={c} {...register('condition')} className="peer sr-only" />
+                  <div className="rounded-tag border border-hairline py-2 text-center text-sm text-muted peer-checked:border-brass peer-checked:bg-brass/10 peer-checked:text-brassLight">
+                    {c}
+                  </div>
+                </label>
+              ))}
+            </div>
+          </Field>
+
+          <Field label="Store" error={errors.store?.message}>
+            <select {...register('store')} className={inputCls}>
+              <option value="">Select store</option>
+              {STORES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          </Field>
+
+          <Field label="Notes (optional)" error={errors.notes?.message}>
+            <textarea {...register('notes')} rows={2} className={inputCls} />
+          </Field>
+
+          <button
+            type="submit"
+            disabled={submitting}
+            className="mt-2 w-full rounded-tag bg-brass py-3 text-sm font-medium text-ink transition hover:bg-brassLight disabled:opacity-50"
+          >
+            {submitting ? 'Registering…' : 'Review ticket'}
+          </button>
+        </form>
+      )}
+
+      {step === 'ticket' && submitted && <Ticket item={submitted} onDone={closeLiffWindow} />}
+    </main>
+  );
+}
+
+const inputCls =
+  'w-full rounded-tag border border-hairline bg-surface px-3 py-2.5 text-sm text-ivory placeholder:text-muted/60 focus:border-brass';
+
+function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-xs uppercase tracking-wide text-muted">{label}</span>
+      {children}
+      {error && <span className="mt-1 block text-xs text-burgundy">{error}</span>}
+    </label>
+  );
+}
+
+function Header({ staffName, step }: { staffName: string | null; step: Step }) {
+  const stepLabel = { photo: 'Photo', details: 'Details', ticket: 'Confirmed' }[step];
+  return (
+    <header className="flex items-center justify-between border-b border-hairline pb-4">
+      <div>
+        <p className="font-display text-lg italic text-ivory">Appraisal Register</p>
+        {staffName && <p className="text-xs text-muted">{staffName}</p>}
+      </div>
+      <span className="rounded-tag border border-hairline px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-brass">
+        {stepLabel}
+      </span>
+    </header>
+  );
+}
+
+function Ticket({ item, onDone }: { item: InventoryItemInput; onDone: () => void }) {
+  return (
+    <section className="mt-8 flex flex-1 flex-col items-center gap-6">
+      <div className="relative w-full rounded-tag border border-hairline bg-surface p-6">
+        <div className="absolute -left-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-ink" />
+        <div className="absolute -right-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-ink" />
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-brass">Registered · In stock</p>
+        <p className="mt-3 font-display text-2xl italic text-ivory">{item.productName}</p>
+        <p className="text-sm text-muted">{item.category} · {item.brand}</p>
+        <div className="my-4 border-t border-dashed border-hairline" />
+        <dl className="space-y-2 text-sm">
+          <Row label="Price" value={`¥${item.price.toLocaleString()}`} />
+          <Row label="Grade" value={item.condition} />
+          <Row label="Store" value={item.store} />
+        </dl>
+      </div>
+      <p className="text-center text-xs text-muted">Sent to the chat. Return to LINE to keep working.</p>
+      <button onClick={onDone} className="w-full rounded-tag border border-brass py-3 text-sm text-brassLight">
+        Done
+      </button>
+    </section>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex justify-between">
+      <dt className="text-muted">{label}</dt>
+      <dd className="text-ivory">{value}</dd>
+    </div>
+  );
+}
+
+function LoadingScreen() {
+  return (
+    <main className="flex min-h-screen items-center justify-center bg-ink">
+      <p className="font-display italic text-muted">Opening register…</p>
+    </main>
+  );
+}
+
+function ErrorScreen({ message }: { message: string }) {
+  return (
+    <main className="flex min-h-screen flex-col items-center justify-center gap-2 bg-ink px-6 text-center">
+      <p className="font-display italic text-brassLight">Could not open</p>
+      <p className="text-sm text-muted">{message}</p>
+    </main>
+  );
+}

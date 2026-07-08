@@ -1,0 +1,15 @@
+name: Weekly sales report
+
+on:
+  schedule:
+    - cron: '0 9 * * 1' # 9am UTC every Monday — adjust for your timezone
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab
+
+jobs:
+  push-report:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Push weekly report
+        run: |
+          curl -f -X POST "${{ secrets.APP_URL }}/api/push-report" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}"
