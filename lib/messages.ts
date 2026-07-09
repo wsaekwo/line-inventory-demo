@@ -93,8 +93,8 @@ export function itemCarousel(items: InventoryItem[]) {
       contents: shown.map((item) => ({
         type: 'bubble',
         size: 'kilo',
-        hero: item.photoUrl
-          ? { type: 'image', url: item.photoUrl, size: 'full', aspectRatio: '20:13', aspectMode: 'cover' }
+        hero: item.photoUrls[0]
+          ? { type: 'image', url: item.photoUrls[0], size: 'full', aspectRatio: '20:13', aspectMode: 'cover' }
           : undefined,
         body: {
           type: 'box',
@@ -119,7 +119,13 @@ export function itemCarousel(items: InventoryItem[]) {
               color: '#A69C89',
               margin: 'sm',
             },
-            { type: 'text', text: item.store, size: 'xs', color: '#A69C89', wrap: true },
+            {
+              type: 'text',
+              text: item.photoUrls.length > 1 ? `${item.store} · ${item.photoUrls.length} photos` : item.store,
+              size: 'xs',
+              color: '#A69C89',
+              wrap: true,
+            },
           ],
         },
         footer: {

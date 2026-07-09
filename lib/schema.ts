@@ -33,6 +33,10 @@ export type Status = (typeof STATUS)[number];
 // The stored/returned shape is deliberately not InventoryItemInput +
 // extras: `pendingPhotoId` is a write-only instruction, not a property of
 // a saved item, so it's left out here on purpose.
+// Bounds both the LIFF form's "add another photo" and the recommended
+// PocketBase "Max Files" setting on items.photos / pending_photos.photos.
+export const MAX_PHOTOS = 5;
+
 export interface InventoryItem {
   id: string;
   category: (typeof CATEGORIES)[number];
@@ -46,6 +50,6 @@ export interface InventoryItem {
   status: Status;
   registeredAt: string;
   soldAt?: string;
-  // Public PocketBase file URL, present once a photo has been attached.
-  photoUrl?: string;
+  // Public PocketBase file URLs, in upload order. Empty if no photo attached.
+  photoUrls: string[];
 }

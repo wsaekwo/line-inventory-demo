@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { lineClient, replyText, downloadContent } from '@/lib/line';
 import { listItems, getItem, sellItem, transferItem } from '@/lib/db';
-import { createPendingPhoto } from '@/lib/pending-photos';
+import { addChatPhoto } from '@/lib/pending-photos';
 import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel } from '@/lib/messages';
 import type { WebhookEvent, Message } from '@line/bot-sdk';
 
@@ -59,12 +59,14 @@ async function handleEvent(event: WebhookEvent) {
       // Staff sent a photo directly in chat. Pull the binary now — LINE's
       // hosted copy isn't permanent — and stash it in PocketBase right
       // away so the LIFF form only needs to carry a small id around.
+      // Consecutive photos from the same person are grouped into one item
+      // automatically (see the recency window in lib/pending-photos.ts).
       const buffer = await downloadContent(event.message.id);
       const userId = event.source.type === 'user' ? event.source.userId : 'unknown';
 
       let liffUrl = `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`;
       try {
-        const pendingPhotoId = await createPendingPhoto(buffer, `${event.message.id}.jpg`, userId);
+        const pendingPhotoId = await addChatPhoto(buffer, `${event.message.id}.jpg`, userId);
         liffUrl += `?pendingPhotoId=${pendingPhotoId}`;
       } catch (err) {
         // Photo upload failed — still let them register, just without the
@@ -74,7 +76,7 @@ async function handleEvent(event: WebhookEvent) {
 
       await replyText(
         event.replyToken,
-        `Photo received. Tap below to add the brand, price and condition:\n${liffUrl}`
+        `Photo received. Send more angles if you like, or tap below to add the brand, price and condition:\n${liffUrl}`
       );
       return;
     }

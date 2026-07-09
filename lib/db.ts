@@ -1,5 +1,5 @@
 import { getPocketBase } from './pocketbase';
-import { deletePendingPhoto, getPendingPhotoUrl } from './pending-photos';
+import { deletePendingPhoto, getPendingPhotoUrls } from './pending-photos';
 import { InventoryItem, InventoryItemInput, Status, STORES } from './schema';
 import type { RecordModel, default as PocketBase } from 'pocketbase';
 
@@ -16,8 +16,8 @@ import type { RecordModel, default as PocketBase } from 'pocketbase';
  *   status        text   (or select: in_stock / sold)
  *   notes         text   (optional)
  *   lineUserId    text
- *   photo         file   (optional — see lib/pending-photos.ts for the note
- *                          on why this is left unprotected)
+ *   photos        file, Max Files: 5 (optional — see lib/pending-photos.ts
+ *                  for why this is left unprotected)
  *   soldAt        text   (optional)
  *
  * PocketBase already gives every record an `id` and a `created` timestamp,
@@ -30,6 +30,7 @@ import type { RecordModel, default as PocketBase } from 'pocketbase';
 const COLLECTION = 'items';
 
 function toInventoryItem(pb: PocketBase, record: RecordModel): InventoryItem {
+  const filenames: string[] = Array.isArray(record.photos) ? record.photos : [];
   return {
     id: record.id,
     brand: record.brand,
@@ -41,7 +42,7 @@ function toInventoryItem(pb: PocketBase, record: RecordModel): InventoryItem {
     status: record.status,
     notes: record.notes || undefined,
     lineUserId: record.lineUserId,
-    photoUrl: record.photo ? pb.files.getUrl(record, record.photo) : undefined,
+    photoUrls: filenames.map((f) => pb.files.getUrl(record, f)),
     registeredAt: record.created,
     soldAt: record.soldAt || undefined,
   };
@@ -102,18 +103,20 @@ export async function createItem(input: InventoryItemInput): Promise<InventoryIt
 
   if (pendingPhotoId) {
     try {
-      const photoUrl = await getPendingPhotoUrl(pendingPhotoId);
-      if (photoUrl) {
-        const res = await fetch(photoUrl);
+      const photoUrls = await getPendingPhotoUrls(pendingPhotoId);
+      for (const url of photoUrls) {
+        const res = await fetch(url);
         if (res.ok) {
           const blob = await res.blob();
-          formData.append('photo', blob, 'photo.jpg');
+          // Repeated 'photos' entries under the same field name is how the
+          // multipart body represents multiple files for one multi-file field.
+          formData.append('photos', blob, 'photo.jpg');
         }
       }
     } catch (err) {
-      // A missing/expired pending photo shouldn't block registration —
-      // the item is still created, just without a photo attached.
-      console.error('Could not attach pending photo to new item:', err);
+      // Missing/expired pending photos shouldn't block registration — the
+      // item is still created, just with fewer (or no) photos attached.
+      console.error('Could not attach pending photos to new item:', err);
     }
   }
 

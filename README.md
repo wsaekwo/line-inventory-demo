@@ -16,29 +16,39 @@ form → appraisal-ticket confirmation pushed back into the LINE chat.
 
 ## Photo flow
 
-A photo can enter the system two ways, and both end up in the same place:
+An item can have several photos (up to `MAX_PHOTOS` in `lib/schema.ts`,
+currently 5). Photos accumulate into one session before an item exists yet,
+then all get attached at once on submit:
 
-- Sent directly in chat → the webhook downloads it from LINE and uploads it
-  to a `pending_photos` record immediately, then replies with a LIFF link
-  carrying that record's id.
-- Taken with the LIFF form's own camera capture → uploaded the moment it's
-  captured, same `pending_photos` collection.
+- Sent directly in chat → each photo the webhook receives is uploaded to a
+  `pending_photos` record. Consecutive photos from the same person are
+  grouped into the same session automatically, based on recency (see the
+  window in `lib/pending-photos.ts`) — send three photos in a row, get one
+  session with three photos, not three separate items.
+- Taken with the LIFF form's own "+" button → uploaded the moment each one's
+  captured, appended to the same session (the form already knows its session
+  id after the first photo).
 
-Either way, the form only ever carries a small `pendingPhotoId` around, not
-the image itself. On submit, that pending photo is copied onto the new
-`items` record and the `pending_photos` row is deleted — `pending_photos` is
-meant to be transient, `items` permanent.
+Either way, the form only ever carries a small `pendingPhotoId` (a session
+id) around, not the image bytes. On submit, every photo in that session is
+copied onto the new `items` record's `photos` field and the `pending_photos`
+row is deleted — `pending_photos` is meant to be transient, `items`
+permanent.
 
-**Why the `photo` field is left unprotected.** PocketBase file access is
+**Why the `photos` field is left unprotected.** PocketBase file access is
 controlled per-field (a "Protected" toggle), separately from a collection's
 List/View API rules — a file can be fetchable by direct URL even when the
 record itself requires a superuser to read. This project deliberately
-leaves `photo` unprotected on both collections, because LINE's own servers
-need to fetch the image directly for Flex Message hero images (item cards,
+leaves `photos` unprotected on both collections, because LINE's own servers
+need to fetch images directly for Flex Message hero images (item cards,
 confirmation tickets) and can't do that through a short-lived auth token
 minted per push. PocketBase appends a random suffix to every filename, so
 the URL isn't guessable — reasonable for a pilot, worth revisiting (e.g.
 tokened URLs generated per-push instead) before handling anything sensitive.
+
+Only the first photo is used as the hero image in Flex Messages (LINE
+bubbles support one hero image each) — additional photos show up as a
+"+N photos" note in the card text instead.
 
 ## PocketBase setup
 
@@ -56,7 +66,7 @@ tokened URLs generated per-push instead) before handling anything sensitive.
    | status | text (or select: in_stock / sold) |
    | notes | text, optional |
    | lineUserId | text |
-   | photo | file, optional — leave **Protected** unchecked (see "Photo flow" above) |
+   | photos | file, optional, **Max Files: 5** (matches `MAX_PHOTOS`) — leave **Protected** unchecked (see "Photo flow" above) |
    | soldAt | text, optional (ISO date string, set automatically when marked sold) |
 
    `id` and `created` are automatic — `created` doubles as `registeredAt`.
@@ -74,12 +84,12 @@ tokened URLs generated per-push instead) before handling anything sensitive.
 4. Create a third collection named **`pending_photos`**:
    | field | type |
    |---|---|
-   | photo | file — leave **Protected** unchecked, same reasoning as `items.photo` |
+   | photos | file, **Max Files: 5** — leave **Protected** unchecked, same reasoning as `items.photos` |
    | lineUserId | text |
 5. Leave all three collections' **List/View/Create/Update API rules blank**
    (superusers only). This app authenticates as a superuser (see
    `lib/pocketbase.ts`), so nothing else needs public access to the
-   *records* — this is separate from the `photo` fields' unprotected file
+   *records* — this is separate from the `photos` fields' unprotected file
    access described above.
 6. Set `POCKETBASE_URL`, `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD`
    in `.env.local`.
@@ -134,12 +144,13 @@ Then in the console, set the **Webhook URL** (Messaging API tab) to
 
 1. Add the Official Account as a friend (QR code is in the console) — you'll
    get the menu (New Item / Inventory) right away.
-2. **New Item**: send a photo in chat, or tap the menu button → picks a
-   category (Bags/Watches/Jewelry/Accessories) → fills out
-   brand/price/condition/store → submits → a ticket-style confirmation card
-   pushes back into the chat. If the sender has a matching row in the
-   `staff` collection, store is pre-filled (still editable) instead of
-   blank.
+2. **New Item**: send one or more photos in chat (they'll group into the
+   same item), or tap the menu button → picks a category
+   (Bags/Watches/Jewelry/Accessories) → fills out brand/price/condition/store
+   → submits → a ticket-style confirmation card pushes back into the chat.
+   Add more angles with the "+" button in the form, up to `MAX_PHOTOS`. If
+   the sender has a matching row in the `staff` collection, store is
+   pre-filled (still editable) instead of blank.
 3. **Inventory**: tap the menu button → pick a store → pick a category (or
    "All") → see its in-stock items as swipeable cards, each with **Sold**
    and **Transfer** buttons. Transfer asks which destination store

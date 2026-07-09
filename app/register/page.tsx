@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { inventoryItemSchema, InventoryItemInput, CONDITIONS, STORES, CATEGORIES } from '@/lib/schema';
+import { inventoryItemSchema, InventoryItemInput, CONDITIONS, STORES, CATEGORIES, MAX_PHOTOS } from '@/lib/schema';
 import { useLiff, sendConfirmationToChat, closeLiffWindow, getLiffQueryParam } from '@/lib/liff-client';
 
 const BRANDS = ['Rolex', 'Chanel', 'Hermès', 'Cartier', 'Louis Vuitton', 'Patek Philippe', 'Van Cleef & Arpels', 'Other'];
@@ -13,7 +13,7 @@ type Step = 'photo' | 'details' | 'ticket';
 export default function RegisterPage() {
   const liff = useLiff();
   const [step, setStep] = useState<Step>('photo');
-  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [photoPreviewUrls, setPhotoPreviewUrls] = useState<string[]>([]);
   const [pendingPhotoId, setPendingPhotoId] = useState<string | null>(null);
   const [photoUploading, setPhotoUploading] = useState(false);
   const [submitted, setSubmitted] = useState<InventoryItemInput | null>(null);
@@ -50,9 +50,10 @@ export default function RegisterPage() {
       });
   }, [liff.userId, setValue]);
 
-  // A photo sent directly in chat arrives here as a pendingPhotoId query
-  // param (the webhook already uploaded it) — pick it up and skip straight
-  // to details with a preview, rather than asking to photograph it again.
+  // Photos sent directly in chat arrive here as a pendingPhotoId query
+  // param (the webhook already uploaded them, possibly several) — pick
+  // them up and skip straight to details, rather than asking to
+  // photograph the item again.
   useEffect(() => {
     const id = getLiffQueryParam('pendingPhotoId');
     if (!id) return;
@@ -61,7 +62,7 @@ export default function RegisterPage() {
     fetch(`/api/pending-photo/${id}`)
       .then((res) => res.json())
       .then((data) => {
-        if (data.url) setPhotoPreviewUrl(data.url);
+        if (Array.isArray(data.urls)) setPhotoPreviewUrls(data.urls);
       })
       .catch(() => {
         /* preview just won't show — pendingPhotoId is still attached on submit */
@@ -71,15 +72,17 @@ export default function RegisterPage() {
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
+    e.target.value = ''; // allow choosing the same file again for a second angle
 
     // Instant local preview while the upload happens in the background.
-    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setPhotoPreviewUrls((prev) => [...prev, URL.createObjectURL(file)]);
     setStep('details');
     setPhotoUploading(true);
 
     const formData = new FormData();
     formData.append('photo', file);
     formData.append('lineUserId', liff.userId ?? '');
+    if (pendingPhotoId) formData.append('pendingPhotoId', pendingPhotoId);
 
     fetch('/api/pending-photo', { method: 'POST', body: formData })
       .then((res) => res.json())
@@ -144,17 +147,15 @@ export default function RegisterPage() {
 
       {step === 'details' && (
         <form onSubmit={handleSubmit(onSubmit)} className="mt-6 flex flex-1 flex-col gap-5">
-          {photoPreviewUrl && (
-            <div className="relative">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img src={photoPreviewUrl} alt="Item" className="h-40 w-full rounded-tag object-cover" />
-              {photoUploading && (
-                <span className="absolute bottom-2 right-2 rounded-tag bg-ink/80 px-2 py-1 text-[10px] uppercase tracking-wide text-brassLight">
-                  Uploading…
-                </span>
-              )}
-            </div>
+          {(photoPreviewUrls.length > 0 || photoUploading) && (
+            <PhotoStrip
+              urls={photoPreviewUrls}
+              uploading={photoUploading}
+              canAddMore={photoPreviewUrls.length < MAX_PHOTOS}
+              onAddMore={() => fileRef.current?.click()}
+            />
           )}
+          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" />
 
           <Field label="Category" error={errors.category?.message}>
             <div className="grid grid-cols-2 gap-2">
@@ -232,13 +233,55 @@ export default function RegisterPage() {
         </form>
       )}
 
-      {step === 'ticket' && submitted && <Ticket item={submitted} photoUrl={photoPreviewUrl} onDone={closeLiffWindow} />}
+      {step === 'ticket' && submitted && (
+        <Ticket item={submitted} photoUrl={photoPreviewUrls[0] ?? null} onDone={closeLiffWindow} />
+      )}
     </main>
   );
 }
 
 const inputCls =
   'w-full rounded-tag border border-hairline bg-surface px-3 py-2.5 text-sm text-ivory placeholder:text-muted/60 focus:border-brass';
+
+function PhotoStrip({
+  urls,
+  uploading,
+  canAddMore,
+  onAddMore,
+}: {
+  urls: string[];
+  uploading: boolean;
+  canAddMore: boolean;
+  onAddMore: () => void;
+}) {
+  return (
+    <div className="flex gap-2 overflow-x-auto pb-1">
+      {urls.map((url, i) => (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          key={url + i}
+          src={url}
+          alt={`Item photo ${i + 1}`}
+          className="h-20 w-20 flex-none rounded-tag object-cover"
+        />
+      ))}
+      {uploading && (
+        <div className="flex h-20 w-20 flex-none items-center justify-center rounded-tag border border-hairline text-[10px] uppercase tracking-wide text-brassLight">
+          Uploading…
+        </div>
+      )}
+      {canAddMore && !uploading && (
+        <button
+          type="button"
+          onClick={onAddMore}
+          className="flex h-20 w-20 flex-none items-center justify-center rounded-tag border border-dashed border-hairline text-2xl text-muted"
+        >
+          +
+        </button>
+      )}
+    </div>
+  );
+}
 
 function Field({ label, error, children }: { label: string; error?: string; children: React.ReactNode }) {
   return (
