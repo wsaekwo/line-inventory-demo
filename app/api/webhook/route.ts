@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
 import { lineClient, replyText, downloadContent } from '@/lib/line';
 import { listItems, getItem, sellItem, transferItem } from '@/lib/db';
+import { createPendingPhoto } from '@/lib/pending-photos';
 import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel } from '@/lib/messages';
 import type { WebhookEvent, Message } from '@line/bot-sdk';
 
@@ -56,13 +57,21 @@ async function handleEvent(event: WebhookEvent) {
 
     if (event.type === 'message' && event.message.type === 'image') {
       // Staff sent a photo directly in chat. Pull the binary now — LINE's
-      // hosted copy isn't permanent — then prompt them to finish details via LIFF.
+      // hosted copy isn't permanent — and stash it in PocketBase right
+      // away so the LIFF form only needs to carry a small id around.
       const buffer = await downloadContent(event.message.id);
-      // TODO: upload `buffer` to your own storage (S3/GCS/R2) and keep the URL,
-      // then pass it as a query param into the LIFF registration form.
-      console.log(`Received photo, ${buffer.length} bytes`);
+      const userId = event.source.type === 'user' ? event.source.userId : 'unknown';
 
-      const liffUrl = `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}?photoMsgId=${event.message.id}`;
+      let liffUrl = `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`;
+      try {
+        const pendingPhotoId = await createPendingPhoto(buffer, `${event.message.id}.jpg`, userId);
+        liffUrl += `?pendingPhotoId=${pendingPhotoId}`;
+      } catch (err) {
+        // Photo upload failed — still let them register, just without the
+        // photo pre-attached, rather than losing the item entirely.
+        console.error('Failed to store pending photo:', err);
+      }
+
       await replyText(
         event.replyToken,
         `Photo received. Tap below to add the brand, price and condition:\n${liffUrl}`

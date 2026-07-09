@@ -62,3 +62,26 @@ export async function sendConfirmationToChat(text: string) {
     await liff.sendMessages([{ type: 'text', text }]);
   }
 }
+
+/**
+ * Reads a query param that may have been appended to the LIFF URL (e.g.
+ * ?pendingPhotoId=abc from the webhook's chat reply). Normally this shows
+ * up directly in window.location.search, but LINE's OAuth redirect flow
+ * sometimes wraps the original path+query inside a `liff.state` param
+ * instead — this checks both so the param is found either way.
+ */
+export function getLiffQueryParam(name: string): string | null {
+  if (typeof window === 'undefined') return null;
+  const params = new URLSearchParams(window.location.search);
+  if (params.has(name)) return params.get(name);
+
+  const state = params.get('liff.state');
+  if (state) {
+    const decoded = decodeURIComponent(state);
+    const qIndex = decoded.indexOf('?');
+    if (qIndex !== -1) {
+      return new URLSearchParams(decoded.slice(qIndex + 1)).get(name);
+    }
+  }
+  return null;
+}

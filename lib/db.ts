@@ -1,6 +1,7 @@
 import { getPocketBase } from './pocketbase';
+import { deletePendingPhoto, getPendingPhotoUrl } from './pending-photos';
 import { InventoryItem, InventoryItemInput, Status, STORES } from './schema';
-import type { RecordModel } from 'pocketbase';
+import type { RecordModel, default as PocketBase } from 'pocketbase';
 
 /**
  * Data lives in PocketBase now. Create a collection named "items" in your
@@ -15,7 +16,9 @@ import type { RecordModel } from 'pocketbase';
  *   status        text   (or select: in_stock / sold)
  *   notes         text   (optional)
  *   lineUserId    text
- *   photoDataUrl  text   (optional — base64 preview; swap for a file field + real storage later)
+ *   photo         file   (optional — see lib/pending-photos.ts for the note
+ *                          on why this is left unprotected)
+ *   soldAt        text   (optional)
  *
  * PocketBase already gives every record an `id` and a `created` timestamp,
  * so those aren't separate fields — see toInventoryItem() below.
@@ -26,7 +29,7 @@ import type { RecordModel } from 'pocketbase';
  */
 const COLLECTION = 'items';
 
-function toInventoryItem(record: RecordModel): InventoryItem {
+function toInventoryItem(pb: PocketBase, record: RecordModel): InventoryItem {
   return {
     id: record.id,
     brand: record.brand,
@@ -38,7 +41,7 @@ function toInventoryItem(record: RecordModel): InventoryItem {
     status: record.status,
     notes: record.notes || undefined,
     lineUserId: record.lineUserId,
-    photoDataUrl: record.photoDataUrl || undefined,
+    photoUrl: record.photo ? pb.files.getUrl(record, record.photo) : undefined,
     registeredAt: record.created,
     soldAt: record.soldAt || undefined,
   };
@@ -67,23 +70,60 @@ export async function listItems(filter?: { store?: string; status?: Status; cate
     sort: '-created',
   });
 
-  return records.map(toInventoryItem);
+  return records.map((r) => toInventoryItem(pb, r));
 }
 
 export async function getItem(id: string) {
   const pb = await getPocketBase();
   try {
     const record = await pb.collection(COLLECTION).getOne(id);
-    return toInventoryItem(record);
+    return toInventoryItem(pb, record);
   } catch {
     return null;
   }
 }
 
+/**
+ * Creates the item record and, if a pendingPhotoId was supplied, copies
+ * that photo onto the new record and cleans up the pending_photos row.
+ * The copy is a real download+reupload rather than a reference, because
+ * pending_photos and items are separate collections with separate
+ * lifecycles — items are permanent, pending_photos are meant to be
+ * transient (see lib/pending-photos.ts).
+ */
 export async function createItem(input: InventoryItemInput): Promise<InventoryItem> {
   const pb = await getPocketBase();
-  const record = await pb.collection(COLLECTION).create({ ...input, status: 'in_stock' });
-  return toInventoryItem(record);
+  const { pendingPhotoId, ...fields } = input;
+
+  const formData = new FormData();
+  Object.entries({ ...fields, status: 'in_stock' }).forEach(([key, value]) => {
+    if (value !== undefined) formData.append(key, String(value));
+  });
+
+  if (pendingPhotoId) {
+    try {
+      const photoUrl = await getPendingPhotoUrl(pendingPhotoId);
+      if (photoUrl) {
+        const res = await fetch(photoUrl);
+        if (res.ok) {
+          const blob = await res.blob();
+          formData.append('photo', blob, 'photo.jpg');
+        }
+      }
+    } catch (err) {
+      // A missing/expired pending photo shouldn't block registration —
+      // the item is still created, just without a photo attached.
+      console.error('Could not attach pending photo to new item:', err);
+    }
+  }
+
+  const record = await pb.collection(COLLECTION).create(formData);
+
+  if (pendingPhotoId) {
+    deletePendingPhoto(pendingPhotoId).catch(() => {});
+  }
+
+  return toInventoryItem(pb, record);
 }
 
 export async function sellItem(id: string) {
@@ -93,7 +133,7 @@ export async function sellItem(id: string) {
       status: 'sold',
       soldAt: new Date().toISOString(),
     });
-    return toInventoryItem(record);
+    return toInventoryItem(pb, record);
   } catch {
     return null;
   }
@@ -103,7 +143,7 @@ export async function transferItem(id: string, toStore: string) {
   const pb = await getPocketBase();
   try {
     const record = await pb.collection(COLLECTION).update(id, { store: toStore });
-    return toInventoryItem(record);
+    return toInventoryItem(pb, record);
   } catch {
     return null;
   }

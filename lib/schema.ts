@@ -16,7 +16,10 @@ export const inventoryItemSchema = z.object({
   store: z.enum(STORES, { errorMap: () => ({ message: 'Select a store' }) }),
   notes: z.string().max(280).optional(),
   lineUserId: z.string().min(1),
-  photoDataUrl: z.string().optional(), // base64 preview captured client-side for the demo
+  // References a pending_photos record already uploaded to PocketBase (via
+  // chat photo or in-form camera capture) — not the photo itself. The photo
+  // bytes are copied onto the item record server-side in lib/db.ts.
+  pendingPhotoId: z.string().optional(),
 });
 
 export type InventoryItemInput = z.infer<typeof inventoryItemSchema>;
@@ -27,10 +30,22 @@ export type InventoryItemInput = z.infer<typeof inventoryItemSchema>;
 export const STATUS = ['in_stock', 'sold'] as const;
 export type Status = (typeof STATUS)[number];
 
-export interface InventoryItem extends InventoryItemInput {
+// The stored/returned shape is deliberately not InventoryItemInput +
+// extras: `pendingPhotoId` is a write-only instruction, not a property of
+// a saved item, so it's left out here on purpose.
+export interface InventoryItem {
   id: string;
+  category: (typeof CATEGORIES)[number];
+  brand: string;
+  productName: string;
+  price: number;
+  condition: (typeof CONDITIONS)[number];
+  store: (typeof STORES)[number] | string;
+  notes?: string;
+  lineUserId: string;
   status: Status;
   registeredAt: string;
-  registeredByName?: string;
   soldAt?: string;
+  // Public PocketBase file URL, present once a photo has been attached.
+  photoUrl?: string;
 }

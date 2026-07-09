@@ -93,6 +93,9 @@ export function itemCarousel(items: InventoryItem[]) {
       contents: shown.map((item) => ({
         type: 'bubble',
         size: 'kilo',
+        hero: item.photoUrl
+          ? { type: 'image', url: item.photoUrl, size: 'full', aspectRatio: '20:13', aspectMode: 'cover' }
+          : undefined,
         body: {
           type: 'box',
           layout: 'vertical',

@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { inventoryItemSchema, InventoryItemInput, CONDITIONS, STORES, CATEGORIES } from '@/lib/schema';
-import { useLiff, sendConfirmationToChat, closeLiffWindow } from '@/lib/liff-client';
+import { useLiff, sendConfirmationToChat, closeLiffWindow, getLiffQueryParam } from '@/lib/liff-client';
 
 const BRANDS = ['Rolex', 'Chanel', 'Hermès', 'Cartier', 'Louis Vuitton', 'Patek Philippe', 'Van Cleef & Arpels', 'Other'];
 
@@ -13,7 +13,9 @@ type Step = 'photo' | 'details' | 'ticket';
 export default function RegisterPage() {
   const liff = useLiff();
   const [step, setStep] = useState<Step>('photo');
-  const [photo, setPhoto] = useState<string | null>(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string | null>(null);
+  const [pendingPhotoId, setPendingPhotoId] = useState<string | null>(null);
+  const [photoUploading, setPhotoUploading] = useState(false);
   const [submitted, setSubmitted] = useState<InventoryItemInput | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -48,25 +50,54 @@ export default function RegisterPage() {
       });
   }, [liff.userId, setValue]);
 
+  // A photo sent directly in chat arrives here as a pendingPhotoId query
+  // param (the webhook already uploaded it) — pick it up and skip straight
+  // to details with a preview, rather than asking to photograph it again.
+  useEffect(() => {
+    const id = getLiffQueryParam('pendingPhotoId');
+    if (!id) return;
+    setPendingPhotoId(id);
+    setStep('details');
+    fetch(`/api/pending-photo/${id}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.url) setPhotoPreviewUrl(data.url);
+      })
+      .catch(() => {
+        /* preview just won't show — pendingPhotoId is still attached on submit */
+      });
+  }, []);
+
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      setPhoto(reader.result as string);
-      setValue('photoDataUrl', reader.result as string);
-      setStep('details');
-    };
-    reader.readAsDataURL(file);
+
+    // Instant local preview while the upload happens in the background.
+    setPhotoPreviewUrl(URL.createObjectURL(file));
+    setStep('details');
+    setPhotoUploading(true);
+
+    const formData = new FormData();
+    formData.append('photo', file);
+    formData.append('lineUserId', liff.userId ?? '');
+
+    fetch('/api/pending-photo', { method: 'POST', body: formData })
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.id) setPendingPhotoId(data.id);
+      })
+      .catch((err) => console.error('Photo upload failed:', err))
+      .finally(() => setPhotoUploading(false));
   }
 
   async function onSubmit(data: InventoryItemInput) {
     setSubmitting(true);
     try {
+      const payload = { ...data, pendingPhotoId: pendingPhotoId ?? undefined };
       const res = await fetch('/api/inventory', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) throw new Error('Registration failed');
       setSubmitted(data);
@@ -113,9 +144,16 @@ export default function RegisterPage() {
 
       {step === 'details' && (
         <form onSubmit={handleSubmit(onSubmit)} className="mt-6 flex flex-1 flex-col gap-5">
-          {photo && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={photo} alt="Item" className="h-40 w-full rounded-tag object-cover" />
+          {photoPreviewUrl && (
+            <div className="relative">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src={photoPreviewUrl} alt="Item" className="h-40 w-full rounded-tag object-cover" />
+              {photoUploading && (
+                <span className="absolute bottom-2 right-2 rounded-tag bg-ink/80 px-2 py-1 text-[10px] uppercase tracking-wide text-brassLight">
+                  Uploading…
+                </span>
+              )}
+            </div>
           )}
 
           <Field label="Category" error={errors.category?.message}>
@@ -186,15 +224,15 @@ export default function RegisterPage() {
 
           <button
             type="submit"
-            disabled={submitting}
+            disabled={submitting || photoUploading}
             className="mt-2 w-full rounded-tag bg-brass py-3 text-sm font-medium text-ink transition hover:bg-brassLight disabled:opacity-50"
           >
-            {submitting ? 'Registering…' : 'Review ticket'}
+            {photoUploading ? 'Uploading photo…' : submitting ? 'Registering…' : 'Review ticket'}
           </button>
         </form>
       )}
 
-      {step === 'ticket' && submitted && <Ticket item={submitted} onDone={closeLiffWindow} />}
+      {step === 'ticket' && submitted && <Ticket item={submitted} photoUrl={photoPreviewUrl} onDone={closeLiffWindow} />}
     </main>
   );
 }
@@ -227,12 +265,16 @@ function Header({ staffName, step }: { staffName: string | null; step: Step }) {
   );
 }
 
-function Ticket({ item, onDone }: { item: InventoryItemInput; onDone: () => void }) {
+function Ticket({ item, photoUrl, onDone }: { item: InventoryItemInput; photoUrl: string | null; onDone: () => void }) {
   return (
     <section className="mt-8 flex flex-1 flex-col items-center gap-6">
       <div className="relative w-full rounded-tag border border-hairline bg-surface p-6">
         <div className="absolute -left-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-ink" />
         <div className="absolute -right-2.5 top-1/2 h-5 w-5 -translate-y-1/2 rounded-full bg-ink" />
+        {photoUrl && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={photoUrl} alt={item.productName} className="mb-4 h-32 w-full rounded-tag object-cover" />
+        )}
         <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-brass">Registered · In stock</p>
         <p className="mt-3 font-display text-2xl italic text-ivory">{item.productName}</p>
         <p className="text-sm text-muted">{item.category} · {item.brand}</p>

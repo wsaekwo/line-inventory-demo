@@ -38,14 +38,19 @@ export async function POST(req: NextRequest) {
 function buildTicketFlex(item: {
   productName: string;
   brand: string;
+  category: string;
   price: number;
   condition: string;
   store: string;
   id: string;
+  photoUrl?: string;
 }) {
   return {
     type: 'bubble',
     size: 'kilo',
+    hero: item.photoUrl
+      ? { type: 'image', url: item.photoUrl, size: 'full', aspectRatio: '20:13', aspectMode: 'cover' }
+      : undefined,
     body: {
       type: 'box',
       layout: 'vertical',
@@ -54,7 +59,7 @@ function buildTicketFlex(item: {
       contents: [
         { type: 'text', text: 'REGISTERED', size: 'xs', color: '#B08D57', weight: 'bold' },
         { type: 'text', text: item.productName, size: 'lg', color: '#EFE8DA', weight: 'bold', margin: 'sm', wrap: true },
-        { type: 'text', text: item.brand, size: 'sm', color: '#A69C89', margin: 'xs' },
+        { type: 'text', text: `${item.category} · ${item.brand}`, size: 'sm', color: '#A69C89', margin: 'xs' },
         { type: 'separator', margin: 'md', color: '#2E2A22' },
         {
           type: 'box',

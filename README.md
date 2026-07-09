@@ -7,12 +7,38 @@ form → appraisal-ticket confirmation pushed back into the LINE chat.
 
 - **Real**: webhook signature verification, event handling (image/text/postback/follow),
   LIFF profile resolution, form → API → push-confirmation round trip, rich menu
-  setup script, the menu/inventory/sell/transfer chat flows, PocketBase-backed storage.
-- **Stubbed for the demo**: photo bytes are downloaded from LINE in the webhook
-  handler but not re-uploaded anywhere (there's a `TODO` in
-  `app/api/webhook/route.ts`) — wire in S3/GCS/R2 there when you're ready.
-  `photoDataUrl` is stored as a base64 string in the meantime, fine for a demo,
-  not for real photo volume.
+  setup script, the menu/inventory/sell/transfer chat flows, PocketBase-backed
+  storage — including photos, which are actually persisted as files in
+  PocketBase, not base64 text.
+- **Not built yet**: no automatic cleanup for abandoned `pending_photos` rows
+  (someone sends a photo, never finishes registering it) — they'll sit unused
+  indefinitely. Fine at pilot volume; worth a periodic cleanup job later.
+
+## Photo flow
+
+A photo can enter the system two ways, and both end up in the same place:
+
+- Sent directly in chat → the webhook downloads it from LINE and uploads it
+  to a `pending_photos` record immediately, then replies with a LIFF link
+  carrying that record's id.
+- Taken with the LIFF form's own camera capture → uploaded the moment it's
+  captured, same `pending_photos` collection.
+
+Either way, the form only ever carries a small `pendingPhotoId` around, not
+the image itself. On submit, that pending photo is copied onto the new
+`items` record and the `pending_photos` row is deleted — `pending_photos` is
+meant to be transient, `items` permanent.
+
+**Why the `photo` field is left unprotected.** PocketBase file access is
+controlled per-field (a "Protected" toggle), separately from a collection's
+List/View API rules — a file can be fetchable by direct URL even when the
+record itself requires a superuser to read. This project deliberately
+leaves `photo` unprotected on both collections, because LINE's own servers
+need to fetch the image directly for Flex Message hero images (item cards,
+confirmation tickets) and can't do that through a short-lived auth token
+minted per push. PocketBase appends a random suffix to every filename, so
+the URL isn't guessable — reasonable for a pilot, worth revisiting (e.g.
+tokened URLs generated per-push instead) before handling anything sensitive.
 
 ## PocketBase setup
 
@@ -30,7 +56,7 @@ form → appraisal-ticket confirmation pushed back into the LINE chat.
    | status | text (or select: in_stock / sold) |
    | notes | text, optional |
    | lineUserId | text |
-   | photoDataUrl | text, optional |
+   | photo | file, optional — leave **Protected** unchecked (see "Photo flow" above) |
    | soldAt | text, optional (ISO date string, set automatically when marked sold) |
 
    `id` and `created` are automatic — `created` doubles as `registeredAt`.
@@ -45,12 +71,17 @@ form → appraisal-ticket confirmation pushed back into the LINE chat.
    Add a row per staff member once you have their LINE userId — same "id"/
    "myid" chat trick works for staff as it does for owners. Not required:
    with no matching row, the form just falls back to asking which store.
-4. Leave both collections' **List/View/Create/Update API rules blank**
+4. Create a third collection named **`pending_photos`**:
+   | field | type |
+   |---|---|
+   | photo | file — leave **Protected** unchecked, same reasoning as `items.photo` |
+   | lineUserId | text |
+5. Leave all three collections' **List/View/Create/Update API rules blank**
    (superusers only). This app authenticates as a superuser (see
-   `lib/pocketbase.ts`), so nothing else needs public access — leaving the
-   rules open would let anyone with the collection URL read or write your
-   data.
-5. Set `POCKETBASE_URL`, `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD`
+   `lib/pocketbase.ts`), so nothing else needs public access to the
+   *records* — this is separate from the `photo` fields' unprotected file
+   access described above.
+6. Set `POCKETBASE_URL`, `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD`
    in `.env.local`.
 
 ## 1. Install
@@ -192,12 +223,15 @@ through `netlify.toml` / `@netlify/plugin-nextjs`). After deploying:
 app/api/webhook/route.ts     bot backend — receives LINE events, drives the menu/inventory/sell/transfer flows
 app/api/inventory/route.ts   LIFF form posts here; pushes confirmation card
 app/api/staff/route.ts       looks up a staff member's store, for form pre-fill
+app/api/pending-photo/route.ts       upload endpoint for in-form camera capture
+app/api/pending-photo/[id]/route.ts  resolves a pendingPhotoId to a preview URL
 app/api/push-report/route.ts sales report push (weekly/monthly), trigger via the GH Actions workflow below
 app/register/page.tsx        the LIFF form itself
 lib/line.ts                  Messaging API client + signature verification
 lib/liff-client.ts           client-side LIFF init / profile hook
 lib/pocketbase.ts            PocketBase client + superuser auth
 lib/staff.ts                 looks up a staff member's store from the staff collection
+lib/pending-photos.ts         create/lookup/delete for photos in transit before an item exists
 lib/db.ts                    data access (listItems, createItem, sellItem, transferItem, periodSummary, etc.)
 lib/messages.ts              LINE message builders — menu, store quick-reply, item carousel, sales report
 lib/schema.ts                shared Zod schema (form + API validate the same shape)
