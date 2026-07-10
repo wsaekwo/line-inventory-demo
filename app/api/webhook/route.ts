@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'crypto';
-import { lineClient, replyText, downloadContent } from '@/lib/line';
+import { lineClient, downloadContent } from '@/lib/line';
 import { listItems, getItem, sellItem, transferItem } from '@/lib/db';
 import { addChatPhoto } from '@/lib/pending-photos';
-import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel } from '@/lib/messages';
+import { getStaffStore } from '@/lib/staff';
+import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel, photoMessages, withMenu } from '@/lib/messages';
 import type { WebhookEvent, Message } from '@line/bot-sdk';
 
 export const runtime = 'nodejs';
@@ -40,6 +41,24 @@ export async function POST(req: NextRequest) {
 
 async function reply(replyToken: string, message: unknown) {
   return lineClient.replyMessage(replyToken, message as Message);
+}
+
+/** Plain text reply with the main menu shortcuts attached — see withMenu(). */
+async function replyText(replyToken: string, text: string) {
+  return reply(replyToken, withMenu({ type: 'text', text }));
+}
+
+/**
+ * Sends up to 5 images as one reply. LINE only shows the quickReply on the
+ * *last* message in a multi-message reply — earlier ones are ignored — so
+ * it's attached there rather than via the usual withMenu(single message)
+ * pattern.
+ */
+async function replyPhotos(replyToken: string, photoUrls: string[]) {
+  const messages: Record<string, any>[] = photoMessages(photoUrls.slice(0, 5));
+  if (messages.length === 0) return;
+  messages[messages.length - 1] = withMenu(messages[messages.length - 1]);
+  return lineClient.replyMessage(replyToken, messages as Message[]);
 }
 
 async function handleEvent(event: WebhookEvent) {
@@ -105,12 +124,16 @@ async function handleEvent(event: WebhookEvent) {
       if (action === 'pick_store') {
         // Store first, then category — asking both up front would need a
         // 3x4 grid of Quick Replies at once, which doesn't fit LINE's UI well.
-        await reply(event.replyToken, storeQuickReply('Which store?', 'pick_category'));
+        const homeStore = event.source.type === 'user' ? await getStaffStore(event.source.userId) : null;
+        await reply(
+          event.replyToken,
+          withMenu(storeQuickReply('Which store?', 'pick_category', {}, undefined, homeStore ?? undefined))
+        );
         return;
       }
 
       if (action === 'pick_category' && store) {
-        await reply(event.replyToken, categoryQuickReply(`Category at ${store}?`, store));
+        await reply(event.replyToken, withMenu(categoryQuickReply(`Category at ${store}?`, store)));
         return;
       }
 
@@ -124,8 +147,18 @@ async function handleEvent(event: WebhookEvent) {
         if (items.length === 0) {
           await replyText(event.replyToken, `No items in stock at ${store}${category && category !== 'all' ? ` in ${category}` : ''}.`);
         } else {
-          await reply(event.replyToken, itemCarousel(items));
+          await reply(event.replyToken, withMenu(itemCarousel(items)));
         }
+        return;
+      }
+
+      if (action === 'view_photos' && itemId) {
+        const item = await getItem(itemId);
+        if (!item || item.photoUrls.length === 0) {
+          await replyText(event.replyToken, 'No photos for that item.');
+          return;
+        }
+        await replyPhotos(event.replyToken, item.photoUrls);
         return;
       }
 
@@ -146,7 +179,7 @@ async function handleEvent(event: WebhookEvent) {
         }
         await reply(
           event.replyToken,
-          storeQuickReply(`Transfer "${item.productName}" to which store?`, 'transfer', { itemId }, item.store)
+          withMenu(storeQuickReply(`Transfer "${item.productName}" to which store?`, 'transfer', { itemId }, item.store))
         );
         return;
       }

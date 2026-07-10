@@ -7,31 +7,51 @@ const MAX_CAROUSEL_ITEMS = 10;
 // Quick Reply button labels are capped at 20 characters by LINE.
 const MAX_LABEL_LENGTH = 20;
 
+export function mainMenuQuickReplyItems() {
+  return [
+    {
+      type: 'action',
+      action: {
+        type: 'uri',
+        label: '📷 New Item',
+        uri: `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`,
+      },
+    },
+    {
+      type: 'action',
+      action: {
+        type: 'postback',
+        label: '📦 Inventory',
+        data: 'action=pick_store',
+        displayText: 'Inventory',
+      },
+    },
+  ];
+}
+
 export function mainMenuMessage() {
   return {
     type: 'text',
     text: 'What would you like to do?',
-    quickReply: {
-      items: [
-        {
-          type: 'action',
-          action: {
-            type: 'uri',
-            label: '📷 New Item',
-            uri: `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`,
-          },
-        },
-        {
-          type: 'action',
-          action: {
-            type: 'postback',
-            label: '📦 Inventory',
-            data: 'action=pick_store',
-            displayText: 'Inventory',
-          },
-        },
-      ],
-    },
+    quickReply: { items: mainMenuQuickReplyItems() },
+  };
+}
+
+/**
+ * Quick Reply chips vanish the moment the user sends anything else — LINE
+ * doesn't offer a way to keep them permanently visible (that's what the
+ * Rich Menu is for). This is the next best thing: attach the main menu
+ * shortcuts to every reply, merged alongside whatever contextual options
+ * a message already has (e.g. a store picker), so there's always a way
+ * back to the top without needing to type. Safe on item counts — our
+ * largest existing quick reply (category picker, 5 items) plus these 2
+ * stays well under LINE's 13-item cap.
+ */
+export function withMenu(message: Record<string, any>): Record<string, any> {
+  const existing = message.quickReply?.items ?? [];
+  return {
+    ...message,
+    quickReply: { items: [...existing, ...mainMenuQuickReplyItems()] },
   };
 }
 
@@ -40,24 +60,36 @@ export function mainMenuMessage() {
  * excluding one (e.g. an item's current store when picking a transfer
  * destination). `extra` params are carried through to the postback data
  * so the next step (e.g. which itemId this concerns) isn't lost.
+ *
+ * `homeStore`, when given, adds a "🏠 My Store" shortcut first and drops
+ * that store from the plain list below it — for staff with a known store
+ * (see lib/staff.ts), so they don't have to pick their own store from a
+ * flat list every time.
  */
-export function storeQuickReply(text: string, actionName: string, extra: Record<string, string> = {}, excludeStore?: string) {
-  const stores = STORES.filter((s) => s !== excludeStore);
-  return {
-    type: 'text',
-    text,
-    quickReply: {
-      items: stores.map((store) => ({
-        type: 'action',
-        action: {
-          type: 'postback',
-          label: store.slice(0, MAX_LABEL_LENGTH),
-          data: new URLSearchParams({ action: actionName, store, ...extra }).toString(),
-          displayText: store,
-        },
-      })),
+export function storeQuickReply(
+  text: string,
+  actionName: string,
+  extra: Record<string, string> = {},
+  excludeStore?: string,
+  homeStore?: string
+) {
+  const stores = STORES.filter((s) => s !== excludeStore && s !== homeStore);
+  const toItem = (store: string, label: string) => ({
+    type: 'action',
+    action: {
+      type: 'postback',
+      label: label.slice(0, MAX_LABEL_LENGTH),
+      data: new URLSearchParams({ action: actionName, store, ...extra }).toString(),
+      displayText: store,
     },
-  };
+  });
+
+  const items = [
+    ...(homeStore && homeStore !== excludeStore ? [toItem(homeStore, '🏠 My Store')] : []),
+    ...stores.map((store) => toItem(store, store)),
+  ];
+
+  return { type: 'text', text, quickReply: { items } };
 }
 
 export function categoryQuickReply(text: string, store: string) {
@@ -83,6 +115,22 @@ export function categoryQuickReply(text: string, store: string) {
   };
 }
 
+/**
+ * Builds one native LINE image message per photo, rather than trying to
+ * cram multiple images into a Flex bubble (which only supports a single
+ * hero image each). LINE allows up to 5 messages per reply, which happens
+ * to match MAX_PHOTOS exactly — every photo an item can have fits in one
+ * reply. Each image gets full native pinch-zoom/save when tapped, which
+ * Flex-embedded images don't get.
+ */
+export function photoMessages(photoUrls: string[]) {
+  return photoUrls.map((url) => ({
+    type: 'image',
+    originalContentUrl: url,
+    previewImageUrl: url,
+  }));
+}
+
 export function itemCarousel(items: InventoryItem[]) {
   const shown = items.slice(0, MAX_CAROUSEL_ITEMS);
   return {
@@ -94,7 +142,19 @@ export function itemCarousel(items: InventoryItem[]) {
         type: 'bubble',
         size: 'kilo',
         hero: item.photoUrls[0]
-          ? { type: 'image', url: item.photoUrls[0], size: 'full', aspectRatio: '20:13', aspectMode: 'cover' }
+          ? {
+              type: 'image',
+              url: item.photoUrls[0],
+              size: 'full',
+              aspectRatio: '20:13',
+              aspectMode: 'cover',
+              action: {
+                type: 'postback',
+                label: 'View photos',
+                data: `action=view_photos&itemId=${item.id}`,
+                displayText: 'View photos',
+              },
+            }
           : undefined,
         body: {
           type: 'box',
