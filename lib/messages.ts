@@ -38,24 +38,6 @@ export function mainMenuMessage() {
 }
 
 /**
- * Quick Reply chips vanish the moment the user sends anything else — LINE
- * doesn't offer a way to keep them permanently visible (that's what the
- * Rich Menu is for). This is the next best thing: attach the main menu
- * shortcuts to every reply, merged alongside whatever contextual options
- * a message already has (e.g. a store picker), so there's always a way
- * back to the top without needing to type. Safe on item counts — our
- * largest existing quick reply (category picker, 5 items) plus these 2
- * stays well under LINE's 13-item cap.
- */
-export function withMenu(message: Record<string, any>): Record<string, any> {
-  const existing = message.quickReply?.items ?? [];
-  return {
-    ...message,
-    quickReply: { items: [...existing, ...mainMenuQuickReplyItems()] },
-  };
-}
-
-/**
  * A text message with one Quick Reply button per store, optionally
  * excluding one (e.g. an item's current store when picking a transfer
  * destination). `extra` params are carried through to the postback data
