@@ -18,7 +18,8 @@ export default function RegisterPage() {
   const [photoUploading, setPhotoUploading] = useState(false);
   const [submitted, setSubmitted] = useState<InventoryItemInput | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+  const libraryInputRef = useRef<HTMLInputElement>(null);
 
   const {
     register,
@@ -69,28 +70,50 @@ export default function RegisterPage() {
       });
   }, []);
 
-  function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    e.target.value = ''; // allow choosing the same file again for a second angle
+  async function handleFiles(e: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // allow choosing the same file(s) again later
+    if (files.length === 0) return;
 
-    // Instant local preview while the upload happens in the background.
-    setPhotoPreviewUrls((prev) => [...prev, URL.createObjectURL(file)]);
+    const remaining = MAX_PHOTOS - photoPreviewUrls.length;
+    const toUpload = files.slice(0, remaining);
+    if (files.length > remaining) {
+      alert(`Only ${remaining} more photo${remaining === 1 ? '' : 's'} can be added (max ${MAX_PHOTOS}).`);
+    }
+    if (toUpload.length === 0) return;
+
     setStep('details');
     setPhotoUploading(true);
 
-    const formData = new FormData();
-    formData.append('photo', file);
-    formData.append('lineUserId', liff.userId ?? '');
-    if (pendingPhotoId) formData.append('pendingPhotoId', pendingPhotoId);
+    // Instant local previews for everything selected, while uploads happen
+    // in the background.
+    setPhotoPreviewUrls((prev) => [...prev, ...toUpload.map((f) => URL.createObjectURL(f))]);
 
-    fetch('/api/pending-photo', { method: 'POST', body: formData })
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.id) setPendingPhotoId(data.id);
-      })
-      .catch((err) => console.error('Photo upload failed:', err))
-      .finally(() => setPhotoUploading(false));
+    // Uploaded one at a time rather than in parallel — each photo needs to
+    // be appended to the same pending_photos session, and the session id
+    // only exists after the first photo's upload resolves. Firing these
+    // in parallel would race and create several separate sessions instead
+    // of one with all the photos in it.
+    let sessionId = pendingPhotoId;
+    for (const file of toUpload) {
+      const formData = new FormData();
+      formData.append('photo', file);
+      formData.append('lineUserId', liff.userId ?? '');
+      if (sessionId) formData.append('pendingPhotoId', sessionId);
+
+      try {
+        const res = await fetch('/api/pending-photo', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.id) {
+          sessionId = data.id;
+          setPendingPhotoId(data.id);
+        }
+      } catch (err) {
+        console.error('Photo upload failed:', err);
+      }
+    }
+
+    setPhotoUploading(false);
   }
 
   async function onSubmit(data: InventoryItemInput) {
@@ -132,12 +155,33 @@ export default function RegisterPage() {
             <p className="font-display text-xl italic text-brassLight">New item</p>
             <p className="mt-2 text-sm text-muted">Photograph the piece to begin the appraisal ticket.</p>
           </div>
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            onChange={handleFiles}
+            className="hidden"
+          />
+          <input
+            ref={libraryInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFiles}
+            className="hidden"
+          />
           <button
-            onClick={() => fileRef.current?.click()}
+            onClick={() => cameraInputRef.current?.click()}
             className="w-full rounded-tag bg-brass py-3 font-body text-sm font-medium text-ink transition hover:bg-brassLight"
           >
             Take photo
+          </button>
+          <button
+            onClick={() => libraryInputRef.current?.click()}
+            className="w-full rounded-tag border border-brass py-3 font-body text-sm font-medium text-brassLight transition hover:bg-brass/10"
+          >
+            Choose photos
           </button>
           <button onClick={() => setStep('details')} className="text-xs text-muted underline underline-offset-4">
             Skip photo for now
@@ -152,10 +196,17 @@ export default function RegisterPage() {
               urls={photoPreviewUrls}
               uploading={photoUploading}
               canAddMore={photoPreviewUrls.length < MAX_PHOTOS}
-              onAddMore={() => fileRef.current?.click()}
+              onAddMore={() => libraryInputRef.current?.click()}
             />
           )}
-          <input ref={fileRef} type="file" accept="image/*" capture="environment" onChange={handleFile} className="hidden" />
+          <input
+            ref={libraryInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            onChange={handleFiles}
+            className="hidden"
+          />
 
           <Field label="Category" error={errors.category?.message}>
             <div className="grid grid-cols-2 gap-2">
