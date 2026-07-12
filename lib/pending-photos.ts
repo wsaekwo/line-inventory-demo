@@ -8,11 +8,11 @@ import type PocketBase from 'pocketbase';
  *
  * Photos land here as soon as they're captured — before the rest of an
  * item's details exist — and an item can accumulate several before the
- * form is ever submitted (a few chat photos in a row, or "add another
- * photo" in the form). The registration form only carries a small session
- * id around after the first photo, not the image bytes. Once the item is
- * registered, lib/db.ts copies all of the session's photos onto the item
- * record and deletes the pending_photos row.
+ * form is ever submitted (a few chat photos in a row, or several picked
+ * at once in the form). The registration form only carries a small
+ * session id around after the first photo, not the image bytes. Once the
+ * item is registered, lib/db.ts copies all of the session's photos onto
+ * the item record and deletes the pending_photos row.
  *
  * The `photos` field is left UNPROTECTED (PocketBase's default) rather
  * than marked "Protected" in the field settings — see the note in
@@ -27,27 +27,53 @@ const COLLECTION = 'pending_photos';
 // instead of (likely wrongly) attaching to an abandoned one.
 const CHAT_SESSION_WINDOW_MS = 10 * 60 * 1000;
 
-async function appendOrCreate(
+interface NewFile {
+  buffer: Buffer;
+  filename: string;
+}
+
+/**
+ * Adds one or more new files to a session, keeping whatever was already
+ * there. PocketBase's `fieldName+` append modifier for file fields only
+ * exists on server v0.23+ — on older servers it's silently ignored, which
+ * looks exactly like "only the first photo ever gets saved" (every
+ * "append" quietly does nothing). This works on any version instead: it
+ * doesn't rely on a modifier at all, it downloads whatever's already in
+ * the session and resubmits the complete file set — old files plus new —
+ * in a single update. A little more transfer than a true append, but
+ * correct everywhere, and sessions are small and short-lived so the
+ * overhead is minor.
+ */
+async function submitPhotos(
   pb: PocketBase,
   existingId: string | null,
-  buffer: Buffer,
-  filename: string,
+  newFiles: NewFile[],
   lineUserId: string
 ): Promise<string> {
-  const blob = new Blob([new Uint8Array(buffer)]);
+  const formData = new FormData();
 
   if (existingId) {
-    const formData = new FormData();
-    // The `+` suffix appends to a multi-file field instead of replacing it.
-    formData.append('photos+', blob, filename);
-    const record = await pb.collection(COLLECTION).update(existingId, formData);
-    return record.id;
+    const record = await pb.collection(COLLECTION).getOne(existingId);
+    const existingFilenames: string[] = Array.isArray(record.photos) ? record.photos : [];
+    const existingBlobs = await Promise.all(
+      existingFilenames.map(async (fname) => {
+        const res = await fetch(pb.files.getUrl(record, fname));
+        return { blob: await res.blob(), filename: fname };
+      })
+    );
+    existingBlobs.forEach(({ blob, filename }) => formData.append('photos', blob, filename));
+  } else {
+    formData.append('lineUserId', lineUserId);
   }
 
-  const formData = new FormData();
-  formData.append('lineUserId', lineUserId);
-  formData.append('photos', blob, filename);
-  const record = await pb.collection(COLLECTION).create(formData);
+  newFiles.forEach(({ buffer, filename }) => {
+    formData.append('photos', new Blob([new Uint8Array(buffer)]), filename);
+  });
+
+  const record = existingId
+    ? await pb.collection(COLLECTION).update(existingId, formData)
+    : await pb.collection(COLLECTION).create(formData);
+
   return record.id;
 }
 
@@ -71,22 +97,22 @@ async function findRecentSession(pb: PocketBase, lineUserId: string) {
 export async function addChatPhoto(buffer: Buffer, filename: string, lineUserId: string): Promise<string> {
   const pb = await getPocketBase();
   const existingId = await findRecentSession(pb, lineUserId);
-  return appendOrCreate(pb, existingId, buffer, filename, lineUserId);
+  return submitPhotos(pb, existingId, [{ buffer, filename }], lineUserId);
 }
 
 /**
- * For the LIFF form's own camera capture. The client already knows its
- * session id after the first photo (pass it as existingId), so this
- * doesn't need the recency heuristic — pass null only for the first photo.
+ * For the LIFF form — one or more files picked at once (multi-select) or
+ * a single camera capture. The client already knows its session id after
+ * the first call (pass it as existingId); pass null only for the very
+ * first photo of a new item.
  */
-export async function addFormPhoto(
+export async function addFormPhotos(
   existingId: string | null,
-  buffer: Buffer,
-  filename: string,
+  files: NewFile[],
   lineUserId: string
 ): Promise<string> {
   const pb = await getPocketBase();
-  return appendOrCreate(pb, existingId, buffer, filename, lineUserId);
+  return submitPhotos(pb, existingId, files, lineUserId);
 }
 
 export async function getPendingPhotoUrls(id: string): Promise<string[]> {

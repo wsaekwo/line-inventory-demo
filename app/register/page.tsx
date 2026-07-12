@@ -85,35 +85,24 @@ export default function RegisterPage() {
     setStep('details');
     setPhotoUploading(true);
 
-    // Instant local previews for everything selected, while uploads happen
-    // in the background.
+    // Instant local previews for everything selected, while the upload
+    // happens in the background.
     setPhotoPreviewUrls((prev) => [...prev, ...toUpload.map((f) => URL.createObjectURL(f))]);
 
-    // Uploaded one at a time rather than in parallel — each photo needs to
-    // be appended to the same pending_photos session, and the session id
-    // only exists after the first photo's upload resolves. Firing these
-    // in parallel would race and create several separate sessions instead
-    // of one with all the photos in it.
-    let sessionId = pendingPhotoId;
-    for (const file of toUpload) {
-      const formData = new FormData();
-      formData.append('photo', file);
-      formData.append('lineUserId', liff.userId ?? '');
-      if (sessionId) formData.append('pendingPhotoId', sessionId);
+    const formData = new FormData();
+    toUpload.forEach((file) => formData.append('photo', file));
+    formData.append('lineUserId', liff.userId ?? '');
+    if (pendingPhotoId) formData.append('pendingPhotoId', pendingPhotoId);
 
-      try {
-        const res = await fetch('/api/pending-photo', { method: 'POST', body: formData });
-        const data = await res.json();
-        if (data.id) {
-          sessionId = data.id;
-          setPendingPhotoId(data.id);
-        }
-      } catch (err) {
-        console.error('Photo upload failed:', err);
-      }
+    try {
+      const res = await fetch('/api/pending-photo', { method: 'POST', body: formData });
+      const data = await res.json();
+      if (data.id) setPendingPhotoId(data.id);
+    } catch (err) {
+      console.error('Photo upload failed:', err);
+    } finally {
+      setPhotoUploading(false);
     }
-
-    setPhotoUploading(false);
   }
 
   async function onSubmit(data: InventoryItemInput) {
