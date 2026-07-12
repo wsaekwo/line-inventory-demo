@@ -5,6 +5,7 @@ import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { inventoryItemSchema, InventoryItemInput, CONDITIONS, STORES, CATEGORIES, MAX_PHOTOS } from '@/lib/schema';
 import { useLiff, sendConfirmationToChat, closeLiffWindow, getLiffQueryParam } from '@/lib/liff-client';
+import { t, storeLabel, categoryLabel, type Lang, type DictKey } from '@/lib/i18n';
 
 const BRANDS = ['Rolex', 'Chanel', 'Hermès', 'Cartier', 'Louis Vuitton', 'Patek Philippe', 'Van Cleef & Arpels', 'Other'];
 
@@ -78,7 +79,7 @@ export default function RegisterPage() {
     const remaining = MAX_PHOTOS - photoPreviewUrls.length;
     const toUpload = files.slice(0, remaining);
     if (files.length > remaining) {
-      alert(`Only ${remaining} more photo${remaining === 1 ? '' : 's'} can be added (max ${MAX_PHOTOS}).`);
+      alert(t(liff.lang, 'maxPhotosAlert', { remaining, plural: remaining === 1 ? '' : 's', max: MAX_PHOTOS }));
     }
     if (toUpload.length === 0) return;
 
@@ -119,7 +120,7 @@ export default function RegisterPage() {
       setStep('ticket');
     } catch (err) {
       console.error(err);
-      alert('Could not register the item. Check your connection and try again.');
+      alert(t(liff.lang, 'registerFailed'));
       setSubmitting(false);
       return;
     }
@@ -131,7 +132,9 @@ export default function RegisterPage() {
     // being opened in a chat-bound context), so its failure is logged
     // only, not shown as an error to the person who just registered.
     try {
-      await sendConfirmationToChat(`Registered ${data.productName} (${data.brand}) — ¥${data.price.toLocaleString()}`);
+      await sendConfirmationToChat(
+        t(liff.lang, 'registeredChatMessage', { name: data.productName, brand: data.brand, price: data.price.toLocaleString() })
+      );
     } catch (err) {
       console.error('sendConfirmationToChat failed (non-fatal):', err);
     }
@@ -140,22 +143,24 @@ export default function RegisterPage() {
   }
 
   if (liff.error) {
-    return <ErrorScreen message={liff.error} />;
+    return <ErrorScreen message={liff.error} lang={liff.lang} />;
   }
 
   if (!liff.ready) {
-    return <LoadingScreen />;
+    return <LoadingScreen lang={liff.lang} />;
   }
+
+  const lang = liff.lang;
 
   return (
     <main className="mx-auto flex min-h-screen max-w-md flex-col px-5 pb-10 pt-8">
-      <Header staffName={liff.displayName} step={step} />
+      <Header staffName={liff.displayName} step={step} lang={lang} />
 
       {step === 'photo' && (
         <section className="mt-8 flex flex-1 flex-col items-center justify-center gap-6 text-center">
           <div className="rounded-tag border border-dashed border-hairline p-10">
-            <p className="font-display text-xl italic text-brassLight">New item</p>
-            <p className="mt-2 text-sm text-muted">Photograph the piece to begin the appraisal ticket.</p>
+            <p className="font-display text-xl italic text-brassLight">{t(lang, 'newItem')}</p>
+            <p className="mt-2 text-sm text-muted">{t(lang, 'photoPrompt')}</p>
           </div>
           <input
             ref={cameraInputRef}
@@ -177,16 +182,16 @@ export default function RegisterPage() {
             onClick={() => cameraInputRef.current?.click()}
             className="w-full rounded-tag bg-brass py-3 font-body text-sm font-medium text-ink transition hover:bg-brassLight"
           >
-            Take photo
+            {t(lang, 'takePhoto')}
           </button>
           <button
             onClick={() => libraryInputRef.current?.click()}
             className="w-full rounded-tag border border-brass py-3 font-body text-sm font-medium text-brassLight transition hover:bg-brass/10"
           >
-            Choose photos
+            {t(lang, 'choosePhotos')}
           </button>
           <button onClick={() => setStep('details')} className="text-xs text-muted underline underline-offset-4">
-            Skip photo for now
+            {t(lang, 'skipPhoto')}
           </button>
         </section>
       )}
@@ -197,6 +202,7 @@ export default function RegisterPage() {
             <PhotoStrip
               urls={photoPreviewUrls}
               uploading={photoUploading}
+              uploadingLabel={t(lang, 'uploading')}
               canAddMore={photoPreviewUrls.length < MAX_PHOTOS}
               onAddMore={() => libraryInputRef.current?.click()}
             />
@@ -210,22 +216,22 @@ export default function RegisterPage() {
             className="hidden"
           />
 
-          <Field label="Category" error={errors.category?.message}>
+          <Field label={t(lang, 'fieldCategory')} error={errors.category?.message && t(lang, errors.category.message as DictKey)}>
             <div className="grid grid-cols-2 gap-2">
               {CATEGORIES.map((c) => (
                 <label key={c} className="cursor-pointer">
                   <input type="radio" value={c} {...register('category')} className="peer sr-only" />
                   <div className="rounded-tag border border-hairline py-2.5 text-center text-sm text-muted peer-checked:border-brass peer-checked:bg-brass/10 peer-checked:text-brassLight">
-                    {c}
+                    {categoryLabel(lang, c)}
                   </div>
                 </label>
               ))}
             </div>
           </Field>
 
-          <Field label="Brand" error={errors.brand?.message}>
+          <Field label={t(lang, 'fieldBrand')} error={errors.brand?.message && t(lang, errors.brand.message as DictKey)}>
             <select {...register('brand')} className={inputCls}>
-              <option value="">Select brand</option>
+              <option value="">{t(lang, 'selectBrand')}</option>
               {BRANDS.map((b) => (
                 <option key={b} value={b}>
                   {b}
@@ -234,11 +240,11 @@ export default function RegisterPage() {
             </select>
           </Field>
 
-          <Field label="Item name" error={errors.productName?.message}>
-            <input {...register('productName')} placeholder="e.g. Submariner Date 41mm" className={inputCls} />
+          <Field label={t(lang, 'fieldItemName')} error={errors.productName?.message && t(lang, errors.productName.message as DictKey)}>
+            <input {...register('productName')} placeholder={t(lang, 'itemNamePlaceholder')} className={inputCls} />
           </Field>
 
-          <Field label="Price (¥)" error={errors.price?.message}>
+          <Field label={t(lang, 'fieldPrice')} error={errors.price?.message && t(lang, errors.price.message as DictKey)}>
             <input
               type="number"
               inputMode="numeric"
@@ -248,7 +254,7 @@ export default function RegisterPage() {
             />
           </Field>
 
-          <Field label="Condition grade" error={errors.condition?.message}>
+          <Field label={t(lang, 'fieldCondition')} error={errors.condition?.message && t(lang, errors.condition.message as DictKey)}>
             <div className="grid grid-cols-4 gap-2">
               {CONDITIONS.map((c) => (
                 <label key={c} className="cursor-pointer">
@@ -261,18 +267,18 @@ export default function RegisterPage() {
             </div>
           </Field>
 
-          <Field label="Store" error={errors.store?.message}>
+          <Field label={t(lang, 'fieldStore')} error={errors.store?.message && t(lang, errors.store.message as DictKey)}>
             <select {...register('store')} className={inputCls}>
-              <option value="">Select store</option>
+              <option value="">{t(lang, 'selectStore')}</option>
               {STORES.map((s) => (
                 <option key={s} value={s}>
-                  {s}
+                  {storeLabel(lang, s)}
                 </option>
               ))}
             </select>
           </Field>
 
-          <Field label="Notes (optional)" error={errors.notes?.message}>
+          <Field label={t(lang, 'fieldNotes')}>
             <textarea {...register('notes')} rows={2} className={inputCls} />
           </Field>
 
@@ -281,13 +287,13 @@ export default function RegisterPage() {
             disabled={submitting || photoUploading}
             className="mt-2 w-full rounded-tag bg-brass py-3 text-sm font-medium text-ink transition hover:bg-brassLight disabled:opacity-50"
           >
-            {photoUploading ? 'Uploading photo…' : submitting ? 'Registering…' : 'Review ticket'}
+            {photoUploading ? t(lang, 'uploadingPhoto') : submitting ? t(lang, 'registering') : t(lang, 'reviewTicket')}
           </button>
         </form>
       )}
 
       {step === 'ticket' && submitted && (
-        <Ticket item={submitted} photoUrl={photoPreviewUrls[0] ?? null} onDone={closeLiffWindow} />
+        <Ticket item={submitted} photoUrl={photoPreviewUrls[0] ?? null} onDone={closeLiffWindow} lang={lang} />
       )}
     </main>
   );
@@ -299,11 +305,13 @@ const inputCls =
 function PhotoStrip({
   urls,
   uploading,
+  uploadingLabel,
   canAddMore,
   onAddMore,
 }: {
   urls: string[];
   uploading: boolean;
+  uploadingLabel: string;
   canAddMore: boolean;
   onAddMore: () => void;
 }) {
@@ -320,7 +328,7 @@ function PhotoStrip({
       ))}
       {uploading && (
         <div className="flex h-20 w-20 flex-none items-center justify-center rounded-tag border border-hairline text-[10px] uppercase tracking-wide text-brassLight">
-          Uploading…
+          {uploadingLabel}
         </div>
       )}
       {canAddMore && !uploading && (
@@ -346,12 +354,12 @@ function Field({ label, error, children }: { label: string; error?: string; chil
   );
 }
 
-function Header({ staffName, step }: { staffName: string | null; step: Step }) {
-  const stepLabel = { photo: 'Photo', details: 'Details', ticket: 'Confirmed' }[step];
+function Header({ staffName, step, lang }: { staffName: string | null; step: Step; lang: Lang }) {
+  const stepLabel = { photo: t(lang, 'stepPhoto'), details: t(lang, 'stepDetails'), ticket: t(lang, 'stepConfirmed') }[step];
   return (
     <header className="flex items-center justify-between border-b border-hairline pb-4">
       <div>
-        <p className="font-display text-lg italic text-ivory">Appraisal Register</p>
+        <p className="font-display text-lg italic text-ivory">{t(lang, 'appTitle')}</p>
         {staffName && <p className="text-xs text-muted">{staffName}</p>}
       </div>
       <span className="rounded-tag border border-hairline px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-brass">
@@ -361,7 +369,17 @@ function Header({ staffName, step }: { staffName: string | null; step: Step }) {
   );
 }
 
-function Ticket({ item, photoUrl, onDone }: { item: InventoryItemInput; photoUrl: string | null; onDone: () => void }) {
+function Ticket({
+  item,
+  photoUrl,
+  onDone,
+  lang,
+}: {
+  item: InventoryItemInput;
+  photoUrl: string | null;
+  onDone: () => void;
+  lang: Lang;
+}) {
   return (
     <section className="mt-8 flex flex-1 flex-col items-center gap-6">
       <div className="relative w-full rounded-tag border border-hairline bg-surface p-6">
@@ -371,19 +389,21 @@ function Ticket({ item, photoUrl, onDone }: { item: InventoryItemInput; photoUrl
           // eslint-disable-next-line @next/next/no-img-element
           <img src={photoUrl} alt={item.productName} className="mb-4 h-32 w-full rounded-tag object-cover" />
         )}
-        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-brass">Registered · In stock</p>
+        <p className="font-mono text-[10px] uppercase tracking-[0.2em] text-brass">{t(lang, 'registeredInStock')}</p>
         <p className="mt-3 font-display text-2xl italic text-ivory">{item.productName}</p>
-        <p className="text-sm text-muted">{item.category} · {item.brand}</p>
+        <p className="text-sm text-muted">
+          {categoryLabel(lang, item.category)} · {item.brand}
+        </p>
         <div className="my-4 border-t border-dashed border-hairline" />
         <dl className="space-y-2 text-sm">
-          <Row label="Price" value={`¥${item.price.toLocaleString()}`} />
-          <Row label="Grade" value={item.condition} />
-          <Row label="Store" value={item.store} />
+          <Row label={t(lang, 'ticketPrice')} value={`¥${item.price.toLocaleString()}`} />
+          <Row label={t(lang, 'ticketGrade')} value={item.condition} />
+          <Row label={t(lang, 'ticketStore')} value={storeLabel(lang, item.store)} />
         </dl>
       </div>
-      <p className="text-center text-xs text-muted">Sent to the chat. Return to LINE to keep working.</p>
+      <p className="text-center text-xs text-muted">{t(lang, 'sentToChat')}</p>
       <button onClick={onDone} className="w-full rounded-tag border border-brass py-3 text-sm text-brassLight">
-        Done
+        {t(lang, 'done')}
       </button>
     </section>
   );
@@ -398,18 +418,18 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function LoadingScreen() {
+function LoadingScreen({ lang }: { lang: Lang }) {
   return (
     <main className="flex min-h-screen items-center justify-center bg-ink">
-      <p className="font-display italic text-muted">Opening register…</p>
+      <p className="font-display italic text-muted">{t(lang, 'opening')}</p>
     </main>
   );
 }
 
-function ErrorScreen({ message }: { message: string }) {
+function ErrorScreen({ message, lang }: { message: string; lang: Lang }) {
   return (
     <main className="flex min-h-screen flex-col items-center justify-center gap-2 bg-ink px-6 text-center">
-      <p className="font-display italic text-brassLight">Could not open</p>
+      <p className="font-display italic text-brassLight">{t(lang, 'couldNotOpen')}</p>
       <p className="text-sm text-muted">{message}</p>
     </main>
   );

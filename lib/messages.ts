@@ -1,5 +1,6 @@
 import { STORES, CATEGORIES, InventoryItem } from './schema';
 import type { PeriodSummary, FullSalesReport } from './db';
+import { t, storeLabel, categoryLabel, type Lang } from './i18n';
 
 // LINE flex carousels support up to 12 bubbles; capped a little below that
 // as a safety margin rather than relying on the exact platform limit.
@@ -7,13 +8,13 @@ const MAX_CAROUSEL_ITEMS = 10;
 // Quick Reply button labels are capped at 20 characters by LINE.
 const MAX_LABEL_LENGTH = 20;
 
-export function mainMenuQuickReplyItems() {
+export function mainMenuQuickReplyItems(lang: Lang) {
   return [
     {
       type: 'action',
       action: {
         type: 'uri',
-        label: '📷 New Item',
+        label: t(lang, 'menuNewItem'),
         uri: `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`,
       },
     },
@@ -21,19 +22,19 @@ export function mainMenuQuickReplyItems() {
       type: 'action',
       action: {
         type: 'postback',
-        label: '📦 Inventory',
+        label: t(lang, 'menuInventory'),
         data: 'action=pick_store',
-        displayText: 'Inventory',
+        displayText: t(lang, 'menuInventoryDisplay'),
       },
     },
   ];
 }
 
-export function mainMenuMessage() {
+export function mainMenuMessage(lang: Lang) {
   return {
     type: 'text',
-    text: 'What would you like to do?',
-    quickReply: { items: mainMenuQuickReplyItems() },
+    text: t(lang, 'menuPrompt'),
+    quickReply: { items: mainMenuQuickReplyItems(lang) },
   };
 }
 
@@ -47,8 +48,13 @@ export function mainMenuMessage() {
  * that store from the plain list below it — for staff with a known store
  * (see lib/staff.ts), so they don't have to pick their own store from a
  * flat list every time.
+ *
+ * Button labels are localized for display, but the postback `store` value
+ * stays the canonical English string from lib/schema.ts — that's what's
+ * filtered on and stored, locale never touches it.
  */
 export function storeQuickReply(
+  lang: Lang,
   text: string,
   actionName: string,
   extra: Record<string, string> = {},
@@ -62,35 +68,35 @@ export function storeQuickReply(
       type: 'postback',
       label: label.slice(0, MAX_LABEL_LENGTH),
       data: new URLSearchParams({ action: actionName, store, ...extra }).toString(),
-      displayText: store,
+      displayText: storeLabel(lang, store),
     },
   });
 
   const items = [
-    ...(homeStore && homeStore !== excludeStore ? [toItem(homeStore, '🏠 My Store')] : []),
-    ...stores.map((store) => toItem(store, store)),
+    ...(homeStore && homeStore !== excludeStore ? [toItem(homeStore, t(lang, 'myStore'))] : []),
+    ...stores.map((store) => toItem(store, storeLabel(lang, store))),
   ];
 
   return { type: 'text', text, quickReply: { items } };
 }
 
-export function categoryQuickReply(text: string, store: string) {
+export function categoryQuickReply(lang: Lang, store: string) {
   const options = ['All', ...CATEGORIES];
   return {
     type: 'text',
-    text,
+    text: t(lang, 'categoryAt', { store: storeLabel(lang, store) }),
     quickReply: {
       items: options.map((category) => ({
         type: 'action',
         action: {
           type: 'postback',
-          label: category.slice(0, MAX_LABEL_LENGTH),
+          label: (category === 'All' ? t(lang, 'categoryAll') : categoryLabel(lang, category)).slice(0, MAX_LABEL_LENGTH),
           data: new URLSearchParams({
             action: 'inventory',
             store,
             category: category === 'All' ? 'all' : category,
           }).toString(),
-          displayText: category,
+          displayText: category === 'All' ? t(lang, 'categoryAll') : categoryLabel(lang, category),
         },
       })),
     },
@@ -113,7 +119,7 @@ export function photoMessages(photoUrls: string[]) {
   }));
 }
 
-export function itemCarousel(items: InventoryItem[]) {
+export function itemCarousel(lang: Lang, items: InventoryItem[]) {
   const shown = items.slice(0, MAX_CAROUSEL_ITEMS);
   return {
     type: 'flex',
@@ -132,9 +138,9 @@ export function itemCarousel(items: InventoryItem[]) {
               aspectMode: 'cover',
               action: {
                 type: 'postback',
-                label: 'View photos',
+                label: t(lang, 'viewPhotos'),
                 data: `action=view_photos&itemId=${item.id}`,
-                displayText: 'View photos',
+                displayText: t(lang, 'viewPhotos'),
               },
             }
           : undefined,
@@ -144,7 +150,13 @@ export function itemCarousel(items: InventoryItem[]) {
           backgroundColor: '#16140F',
           paddingAll: '16px',
           contents: [
-            { type: 'text', text: `${item.category.toUpperCase()} · ${item.brand}`, size: 'xs', color: '#B08D57', weight: 'bold' },
+            {
+              type: 'text',
+              text: `${categoryLabel(lang, item.category).toUpperCase()} · ${item.brand}`,
+              size: 'xs',
+              color: '#B08D57',
+              weight: 'bold',
+            },
             {
               type: 'text',
               text: item.productName,
@@ -156,14 +168,17 @@ export function itemCarousel(items: InventoryItem[]) {
             },
             {
               type: 'text',
-              text: `¥${item.price.toLocaleString()} · Grade ${item.condition}`,
+              text: `¥${item.price.toLocaleString()} · ${item.condition}`,
               size: 'xs',
               color: '#A69C89',
               margin: 'sm',
             },
             {
               type: 'text',
-              text: item.photoUrls.length > 1 ? `${item.store} · ${item.photoUrls.length} photos` : item.store,
+              text:
+                item.photoUrls.length > 1
+                  ? `${storeLabel(lang, item.store)} · ${item.photoUrls.length}`
+                  : storeLabel(lang, item.store),
               size: 'xs',
               color: '#A69C89',
               wrap: true,
@@ -182,9 +197,9 @@ export function itemCarousel(items: InventoryItem[]) {
               height: 'sm',
               action: {
                 type: 'postback',
-                label: 'Sold',
+                label: t(lang, 'reportSold'),
                 data: `action=sold&itemId=${item.id}`,
-                displayText: `Sold: ${item.productName}`,
+                displayText: `${t(lang, 'reportSold')}: ${item.productName}`,
               },
             },
             {
@@ -193,9 +208,9 @@ export function itemCarousel(items: InventoryItem[]) {
               height: 'sm',
               action: {
                 type: 'postback',
-                label: 'Transfer',
+                label: lang === 'ja' ? '移動' : 'Transfer',
                 data: `action=transfer_pick&itemId=${item.id}`,
-                displayText: `Transfer: ${item.productName}`,
+                displayText: `${lang === 'ja' ? '移動' : 'Transfer'}: ${item.productName}`,
               },
             },
           ],
@@ -205,8 +220,8 @@ export function itemCarousel(items: InventoryItem[]) {
   };
 }
 
-export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
-  const storeLabel = summary.store === 'all' ? 'All stores' : summary.store;
+export function reportFlex(lang: Lang, summary: PeriodSummary, maxRevenueForBar?: number) {
+  const label = summary.store === 'all' ? t(lang, 'reportAllStores') : storeLabel(lang, summary.store);
   const bar =
     maxRevenueForBar && maxRevenueForBar > 0
       ? [
@@ -237,7 +252,7 @@ export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
 
   return {
     type: 'flex',
-    altText: `${storeLabel} — ${summary.periodDays}-day summary`,
+    altText: `${label} — ${summary.periodDays}`,
     contents: {
       type: 'bubble',
       size: 'kilo',
@@ -247,15 +262,15 @@ export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
         backgroundColor: '#16140F',
         paddingAll: '20px',
         contents: [
-          { type: 'text', text: `${summary.periodDays}-DAY SUMMARY`, size: 'xs', color: '#B08D57', weight: 'bold' },
-          { type: 'text', text: storeLabel, size: 'lg', color: '#EFE8DA', weight: 'bold', margin: 'sm', wrap: true },
+          { type: 'text', text: t(lang, 'reportSummary', { days: summary.periodDays }), size: 'xs', color: '#B08D57', weight: 'bold' },
+          { type: 'text', text: label, size: 'lg', color: '#EFE8DA', weight: 'bold', margin: 'sm', wrap: true },
           { type: 'separator', margin: 'md', color: '#2E2A22' },
           {
             type: 'box',
             layout: 'horizontal',
             margin: 'md',
             contents: [
-              { type: 'text', text: 'New items', size: 'sm', color: '#A69C89', flex: 1 },
+              { type: 'text', text: t(lang, 'reportNewItems'), size: 'sm', color: '#A69C89', flex: 1 },
               { type: 'text', text: String(summary.newlyRegistered), size: 'sm', color: '#EFE8DA', align: 'end' },
             ],
           },
@@ -264,7 +279,7 @@ export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
             layout: 'horizontal',
             margin: 'sm',
             contents: [
-              { type: 'text', text: 'Sold', size: 'sm', color: '#A69C89', flex: 1 },
+              { type: 'text', text: t(lang, 'reportSold'), size: 'sm', color: '#A69C89', flex: 1 },
               { type: 'text', text: String(summary.sold), size: 'sm', color: '#EFE8DA', align: 'end' },
             ],
           },
@@ -273,7 +288,7 @@ export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
             layout: 'horizontal',
             margin: 'sm',
             contents: [
-              { type: 'text', text: 'Revenue', size: 'sm', color: '#A69C89', flex: 1 },
+              { type: 'text', text: t(lang, 'reportRevenue'), size: 'sm', color: '#A69C89', flex: 1 },
               { type: 'text', text: `¥${summary.revenue.toLocaleString()}`, size: 'sm', color: '#EFE8DA', align: 'end' },
             ],
           },
@@ -290,9 +305,9 @@ export function reportFlex(summary: PeriodSummary, maxRevenueForBar?: number) {
  * is visible at a glance — as close to a "chart" as Flex Messages reasonably
  * support without generating and hosting an actual image.
  */
-export function salesReportCarousel(report: FullSalesReport) {
+export function salesReportCarousel(lang: Lang, report: FullSalesReport) {
   const maxRevenue = Math.max(1, ...report.perStore.map((s) => s.revenue));
-  const bubbles = [reportFlex(report.total), ...report.perStore.map((s) => reportFlex(s, maxRevenue))];
+  const bubbles = [reportFlex(lang, report.total), ...report.perStore.map((s) => reportFlex(lang, s, maxRevenue))];
   return {
     type: 'flex',
     altText: `${report.periodDays}-day sales report`,

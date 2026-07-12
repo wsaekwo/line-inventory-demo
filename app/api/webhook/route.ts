@@ -4,6 +4,8 @@ import { lineClient, downloadContent } from '@/lib/line';
 import { listItems, getItem, sellItem, transferItem } from '@/lib/db';
 import { addChatPhoto } from '@/lib/pending-photos';
 import { getStaffStore } from '@/lib/staff';
+import { getUserLanguage } from '@/lib/bot-lang';
+import { t, storeLabel, categoryLabel, type Lang } from '@/lib/i18n';
 import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel, photoMessages } from '@/lib/messages';
 import type { WebhookEvent, Message } from '@line/bot-sdk';
 
@@ -56,14 +58,19 @@ async function replyPhotos(replyToken: string, photoUrls: string[]) {
 
 async function handleEvent(event: WebhookEvent) {
   try {
+    const userId = 'source' in event && event.source.type === 'user' ? event.source.userId : null;
+    // Resolved once per event and threaded through everything below —
+    // avoids re-fetching the profile for every message this handler sends.
+    const lang: Lang = userId ? await getUserLanguage(userId) : 'ja';
+
     // First contact (or re-follow after unblocking) — show the menu right away.
     if (event.type === 'follow') {
-      if (event.source.type === 'user') {
+      if (userId) {
         // Handy when wiring up OWNER_LINE_USER_IDS — grab it from here, or
         // just have the owner type "id" once they've followed (see below).
-        console.log('New follower userId:', event.source.userId);
+        console.log('New follower userId:', userId);
       }
-      await reply(event.replyToken, mainMenuMessage());
+      await reply(event.replyToken, mainMenuMessage(lang));
       return;
     }
 
@@ -74,11 +81,10 @@ async function handleEvent(event: WebhookEvent) {
       // Consecutive photos from the same person are grouped into one item
       // automatically (see the recency window in lib/pending-photos.ts).
       const buffer = await downloadContent(event.message.id);
-      const userId = event.source.type === 'user' ? event.source.userId : 'unknown';
 
       let liffUrl = `https://liff.line.me/${process.env.NEXT_PUBLIC_LIFF_ID}`;
       try {
-        const pendingPhotoId = await addChatPhoto(buffer, `${event.message.id}.jpg`, userId);
+        const pendingPhotoId = await addChatPhoto(buffer, `${event.message.id}.jpg`, userId ?? 'unknown');
         liffUrl += `?pendingPhotoId=${pendingPhotoId}`;
       } catch (err) {
         // Photo upload failed — still let them register, just without the
@@ -86,10 +92,7 @@ async function handleEvent(event: WebhookEvent) {
         console.error('Failed to store pending photo:', err);
       }
 
-      await replyText(
-        event.replyToken,
-        `Photo received. Send more angles if you like, or tap below to add the brand, price and condition:\n${liffUrl}`
-      );
+      await replyText(event.replyToken, t(lang, 'photoReceived', { url: liffUrl }));
       return;
     }
 
@@ -100,11 +103,11 @@ async function handleEvent(event: WebhookEvent) {
     // without needing to dig through server logs or open a LIFF page.
     if (event.type === 'message' && event.message.type === 'text') {
       const text = event.message.text.trim().toLowerCase();
-      if ((text === 'id' || text === 'myid') && event.source.type === 'user') {
-        await replyText(event.replyToken, `Your LINE user ID:\n${event.source.userId}`);
+      if ((text === 'id' || text === 'myid') && userId) {
+        await replyText(event.replyToken, t(lang, 'yourUserId', { id: userId }));
         return;
       }
-      await reply(event.replyToken, mainMenuMessage());
+      await reply(event.replyToken, mainMenuMessage(lang));
       return;
     }
 
@@ -117,13 +120,16 @@ async function handleEvent(event: WebhookEvent) {
       if (action === 'pick_store') {
         // Store first, then category — asking both up front would need a
         // 3x4 grid of Quick Replies at once, which doesn't fit LINE's UI well.
-        const homeStore = event.source.type === 'user' ? await getStaffStore(event.source.userId) : null;
-        await reply(event.replyToken, storeQuickReply('Which store?', 'pick_category', {}, undefined, homeStore ?? undefined));
+        const homeStore = userId ? await getStaffStore(userId) : null;
+        await reply(
+          event.replyToken,
+          storeQuickReply(lang, t(lang, 'whichStore'), 'pick_category', {}, undefined, homeStore ?? undefined)
+        );
         return;
       }
 
       if (action === 'pick_category' && store) {
-        await reply(event.replyToken, categoryQuickReply(`Category at ${store}?`, store));
+        await reply(event.replyToken, categoryQuickReply(lang, store));
         return;
       }
 
@@ -135,9 +141,14 @@ async function handleEvent(event: WebhookEvent) {
           category: category && category !== 'all' ? category : undefined,
         });
         if (items.length === 0) {
-          await replyText(event.replyToken, `No items in stock at ${store}${category && category !== 'all' ? ` in ${category}` : ''}.`);
+          const categoryFragment =
+            category && category !== 'all' ? t(lang, 'inCategory', { category: categoryLabel(lang, category) }) : '';
+          await replyText(
+            event.replyToken,
+            t(lang, 'noItemsInStock', { store: storeLabel(lang, store), category: categoryFragment })
+          );
         } else {
-          await reply(event.replyToken, itemCarousel(items));
+          await reply(event.replyToken, itemCarousel(lang, items));
         }
         return;
       }
@@ -145,7 +156,7 @@ async function handleEvent(event: WebhookEvent) {
       if (action === 'view_photos' && itemId) {
         const item = await getItem(itemId);
         if (!item || item.photoUrls.length === 0) {
-          await replyText(event.replyToken, 'No photos for that item.');
+          await replyText(event.replyToken, t(lang, 'noPhotosForItem'));
           return;
         }
         await replyPhotos(event.replyToken, item.photoUrls);
@@ -156,7 +167,7 @@ async function handleEvent(event: WebhookEvent) {
         const updated = await sellItem(itemId);
         await replyText(
           event.replyToken,
-          updated ? `Marked "${updated.productName}" as sold.` : 'Could not find that item.'
+          updated ? t(lang, 'markedSold', { name: updated.productName }) : t(lang, 'itemNotFound')
         );
         return;
       }
@@ -164,12 +175,12 @@ async function handleEvent(event: WebhookEvent) {
       if (action === 'transfer_pick' && itemId) {
         const item = await getItem(itemId);
         if (!item) {
-          await replyText(event.replyToken, 'Could not find that item.');
+          await replyText(event.replyToken, t(lang, 'itemNotFound'));
           return;
         }
         await reply(
           event.replyToken,
-          storeQuickReply(`Transfer "${item.productName}" to which store?`, 'transfer', { itemId }, item.store)
+          storeQuickReply(lang, t(lang, 'transferPrompt', { name: item.productName }), 'transfer', { itemId }, item.store)
         );
         return;
       }
@@ -178,7 +189,7 @@ async function handleEvent(event: WebhookEvent) {
         const updated = await transferItem(itemId, store);
         await replyText(
           event.replyToken,
-          updated ? `Transferred "${updated.productName}" to ${store}.` : 'Could not find that item.'
+          updated ? t(lang, 'transferredTo', { name: updated.productName, store: storeLabel(lang, store) }) : t(lang, 'itemNotFound')
         );
         return;
       }

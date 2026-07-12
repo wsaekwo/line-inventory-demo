@@ -2,12 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import liff from '@line/liff';
+import { normalizeLang, type Lang } from './i18n';
 
 interface LiffState {
   ready: boolean;
   error: string | null;
   userId: string | null;
   displayName: string | null;
+  lang: Lang;
 }
 
 /**
@@ -21,6 +23,7 @@ export function useLiff(): LiffState {
     error: null,
     userId: null,
     displayName: null,
+    lang: normalizeLang(undefined),
   });
 
   useEffect(() => {
@@ -43,6 +46,7 @@ export function useLiff(): LiffState {
           error: null,
           userId: profile.userId,
           displayName: profile.displayName,
+          lang: normalizeLang(liff.getLanguage()),
         });
       })
       .catch((err) => {

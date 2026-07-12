@@ -5,15 +5,15 @@ export const STORES = ['Store A — Ginza', 'Store B — Omotesando', 'Store C �
 export const CATEGORIES = ['Bags', 'Watches', 'Jewelry', 'Accessories'] as const;
 
 export const inventoryItemSchema = z.object({
-  category: z.enum(CATEGORIES, { errorMap: () => ({ message: 'Select a category' }) }),
-  brand: z.string().min(1, 'Select a brand'),
-  productName: z.string().min(1, 'Enter the item name'),
+  category: z.enum(CATEGORIES, { errorMap: () => ({ message: 'errorSelectCategory' }) }),
+  brand: z.string().min(1, 'errorSelectBrand'),
+  productName: z.string().min(1, 'errorEnterItemName'),
   price: z
-    .number({ invalid_type_error: 'Enter a price' })
+    .number({ invalid_type_error: 'errorEnterPrice' })
     .int()
-    .positive('Price must be greater than 0'),
-  condition: z.enum(CONDITIONS, { errorMap: () => ({ message: 'Select a condition grade' }) }),
-  store: z.enum(STORES, { errorMap: () => ({ message: 'Select a store' }) }),
+    .positive('errorPricePositive'),
+  condition: z.enum(CONDITIONS, { errorMap: () => ({ message: 'errorSelectCondition' }) }),
+  store: z.enum(STORES, { errorMap: () => ({ message: 'errorSelectStore' }) }),
   notes: z.string().max(280).optional(),
   lineUserId: z.string().min(1),
   // References a pending_photos record already uploaded to PocketBase (via

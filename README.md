@@ -14,6 +14,33 @@ form → appraisal-ticket confirmation pushed back into the LINE chat.
   (someone sends a photo, never finishes registering it) — they'll sit unused
   indefinitely. Fine at pilot volume; worth a periodic cleanup job later.
 
+## Localization
+
+English and Japanese are both supported, defaulting to Japanese (the
+primary market) when a person's language can't be determined.
+
+- **LIFF form**: detected via `liff.getLanguage()`, no configuration needed.
+- **Bot chat replies**: resolved via LINE's Get Profile API, which includes
+  a `language` field once a person has accepted LINE's Privacy Policy — see
+  `lib/bot-lang.ts`. Falls back to Japanese if that field is missing.
+- **Sales reports**: each owner in `OWNER_LINE_USER_IDS` gets the report in
+  their own resolved language, not one shared language for everyone.
+- All strings live in one place, `lib/i18n.ts` — add a key to both the `en`
+  and `ja` objects and reference it via `t(lang, 'yourKey')` anywhere new
+  user-facing text is needed. Store names and category labels have their
+  own small lookup (`storeLabel` / `categoryLabel`) since those are stored
+  as plain English strings in PocketBase (used in filters/postback data)
+  but shown translated — the stored value never changes with locale, only
+  the display label does.
+
+**Known gap**: the Rich Menu (`scripts/setup-rich-menu.mjs`) is a single
+image with labels baked into the PNG — it can't be dynamically localized
+per-user without maintaining two separate images (English-labeled and
+Japanese-labeled) and linking the right one per user via
+`linkRichMenuToUser`. That needs an actual second design asset, so it's
+left as English-only for now; the Quick Reply menu and everything else
+in chat is fully localized regardless.
+
 ## Photo flow
 
 An item can have several photos (up to `MAX_PHOTOS` in `lib/schema.ts`,

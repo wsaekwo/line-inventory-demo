@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { fullSalesReport } from '@/lib/db';
 import { pushFlex } from '@/lib/line';
 import { salesReportCarousel } from '@/lib/messages';
+import { getUserLanguage } from '@/lib/bot-lang';
 
 export const runtime = 'nodejs';
 
@@ -40,9 +41,16 @@ export async function POST(req: NextRequest) {
   }
 
   const report = await fullSalesReport(days);
-  const message = salesReportCarousel(report);
 
-  await Promise.all(ownerIds.map((id) => pushFlex(id, message.altText, message.contents)));
+  // Each owner may prefer a different language — build and push the report
+  // separately per owner rather than one shared message for everyone.
+  await Promise.all(
+    ownerIds.map(async (id) => {
+      const lang = await getUserLanguage(id);
+      const message = salesReportCarousel(lang, report);
+      return pushFlex(id, message.altText, message.contents);
+    })
+  );
 
   return NextResponse.json({ ok: true, report });
 }
