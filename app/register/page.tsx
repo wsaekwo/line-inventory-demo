@@ -117,13 +117,26 @@ export default function RegisterPage() {
       if (!res.ok) throw new Error('Registration failed');
       setSubmitted(data);
       setStep('ticket');
-      await sendConfirmationToChat(`Registered ${data.productName} (${data.brand}) — ¥${data.price.toLocaleString()}`);
     } catch (err) {
       console.error(err);
       alert('Could not register the item. Check your connection and try again.');
-    } finally {
       setSubmitting(false);
+      return;
     }
+
+    // The item is already safely registered at this point — sending a
+    // confirmation message back into the chat is a nice-to-have, not a
+    // condition of success. liff.sendMessages() can throw for reasons
+    // unrelated to registration (missing chat_message.write scope, or not
+    // being opened in a chat-bound context), so its failure is logged
+    // only, not shown as an error to the person who just registered.
+    try {
+      await sendConfirmationToChat(`Registered ${data.productName} (${data.brand}) — ¥${data.price.toLocaleString()}`);
+    } catch (err) {
+      console.error('sendConfirmationToChat failed (non-fatal):', err);
+    }
+
+    setSubmitting(false);
   }
 
   if (liff.error) {
