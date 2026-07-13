@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "setup-rich-menu": "node scripts/setup-rich-menu.mjs"
+    "setup-rich-menu": "node scripts/setup-rich-menu.mjs",
+    "generate-rich-menu-images": "node scripts/generate-rich-menu-images.mjs"
   },
   "dependencies": {
     "@line/bot-sdk": "^9.4.1",
@@ -25,6 +26,7 @@
     "@types/react-dom": "^18.3.0",
     "autoprefixer": "^10.4.19",
     "postcss": "^8.4.39",
+    "sharp": "^0.33.5",
     "tailwindcss": "^3.4.6",
     "typescript": "^5.5.3"
   }

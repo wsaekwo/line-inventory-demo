@@ -4,6 +4,8 @@ import { lineClient, downloadContent } from '@/lib/line';
 import { listItems, getItem, sellItem, transferItem } from '@/lib/db';
 import { addChatPhoto } from '@/lib/pending-photos';
 import { getStaffStore } from '@/lib/staff';
+import { setLangOverride } from '@/lib/user-lang';
+import { linkRichMenuForLang } from '@/lib/rich-menu';
 import { getUserLanguage } from '@/lib/bot-lang';
 import { t, storeLabel, categoryLabel, type Lang } from '@/lib/i18n';
 import { mainMenuMessage, storeQuickReply, categoryQuickReply, itemCarousel, photoMessages } from '@/lib/messages';
@@ -69,6 +71,9 @@ async function handleEvent(event: WebhookEvent) {
         // Handy when wiring up OWNER_LINE_USER_IDS — grab it from here, or
         // just have the owner type "id" once they've followed (see below).
         console.log('New follower userId:', userId);
+        // Account-wide default is Japanese — only English followers need
+        // an explicit link. Fire-and-forget: cosmetic, shouldn't delay the reply.
+        if (lang === 'en') linkRichMenuForLang(userId, lang);
       }
       await reply(event.replyToken, mainMenuMessage(lang));
       return;
@@ -103,6 +108,15 @@ async function handleEvent(event: WebhookEvent) {
     // without needing to dig through server logs or open a LIFF page.
     if (event.type === 'message' && event.message.type === 'text') {
       const text = event.message.text.trim().toLowerCase();
+
+      if ((text === 'english' || text === '日本語') && userId) {
+        const newLang: Lang = text === 'english' ? 'en' : 'ja';
+        await setLangOverride(userId, newLang);
+        await linkRichMenuForLang(userId, newLang);
+        await replyText(event.replyToken, t(newLang, newLang === 'en' ? 'languageSetEnglish' : 'languageSetJapanese'));
+        return;
+      }
+
       if ((text === 'id' || text === 'myid') && userId) {
         await replyText(event.replyToken, t(lang, 'yourUserId', { id: userId }));
         return;

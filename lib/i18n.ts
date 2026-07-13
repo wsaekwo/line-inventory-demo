@@ -89,6 +89,10 @@ const dict = {
     transferredTo: 'Transferred "{name}" to {store}.',
     yourUserId: 'Your LINE user ID:\n{id}',
 
+    // Language switch
+    languageSetEnglish: 'Language set to English.',
+    languageSetJapanese: '言語を日本語に設定しました。',
+
     // Sales report
     reportSummary: '{days}-DAY SUMMARY',
     reportAllStores: 'All stores',
@@ -164,6 +168,9 @@ const dict = {
     itemNotFound: '該当する商品が見つかりませんでした。',
     transferredTo: '「{name}」を{store}に移動しました。',
     yourUserId: 'あなたのLINEユーザーID：\n{id}',
+
+    languageSetEnglish: 'Language set to English.',
+    languageSetJapanese: '言語を日本語に設定しました。',
 
     reportSummary: '{days}日間のサマリー',
     reportAllStores: '全店舗',

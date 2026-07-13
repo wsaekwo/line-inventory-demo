@@ -25,6 +25,12 @@ primary market) when a person's language can't be determined.
   `lib/bot-lang.ts`. Falls back to Japanese if that field is missing.
 - **Sales reports**: each owner in `OWNER_LINE_USER_IDS` gets the report in
   their own resolved language, not one shared language for everyone.
+- **Manual override**: type **"English"** or **"日本語"** to the bot to
+  force that language regardless of device settings — stored in a
+  `user_prefs` collection (`lineUserId`, `lang`), checked before
+  auto-detection. Once set, it sticks until switched again. Add this
+  collection in PocketBase alongside `items`/`staff`/`pending_photos`, same
+  API rules recommendation (leave List/View/Create/Update blank).
 - All strings live in one place, `lib/i18n.ts` — add a key to both the `en`
   and `ja` objects and reference it via `t(lang, 'yourKey')` anywhere new
   user-facing text is needed. Store names and category labels have their
@@ -33,13 +39,16 @@ primary market) when a person's language can't be determined.
   but shown translated — the stored value never changes with locale, only
   the display label does.
 
-**Known gap**: the Rich Menu (`scripts/setup-rich-menu.mjs`) is a single
-image with labels baked into the PNG — it can't be dynamically localized
-per-user without maintaining two separate images (English-labeled and
-Japanese-labeled) and linking the right one per user via
-`linkRichMenuToUser`. That needs an actual second design asset, so it's
-left as English-only for now; the Quick Reply menu and everything else
-in chat is fully localized regardless.
+- **Rich Menu**: two images (`scripts/rich-menu-en.png`, `scripts/rich-menu-ja.png`),
+  set up as separate LINE rich menus by `scripts/setup-rich-menu.mjs`.
+  Japanese is the account-wide default (for brand-new followers whose
+  language isn't known yet); the English one gets linked to a specific
+  user at runtime — on `follow` if their profile language resolves to
+  English, or immediately when they type "English"/"日本語" to switch —
+  see `lib/rich-menu.ts`. Unlike everything else here, a rich menu's
+  labels are baked into its image rather than rendered as text, so
+  changing the wording means regenerating the PNGs, not editing a string
+  in `lib/i18n.ts`.
 
 ## Photo flow
 
@@ -113,12 +122,18 @@ bubbles support one hero image each) — additional photos show up as a
    |---|---|
    | photos | file, **Max Files: 5** — leave **Protected** unchecked, same reasoning as `items.photos` |
    | lineUserId | text |
-5. Leave all three collections' **List/View/Create/Update API rules blank**
+5. Create a fourth collection named **`user_prefs`** (manual language
+   overrides — see "Localization" above):
+   | field | type |
+   |---|---|
+   | lineUserId | text |
+   | lang | text (or select: en / ja) |
+6. Leave all four collections' **List/View/Create/Update API rules blank**
    (superusers only). This app authenticates as a superuser (see
    `lib/pocketbase.ts`), so nothing else needs public access to the
    *records* — this is separate from the `photos` fields' unprotected file
    access described above.
-6. Set `POCKETBASE_URL`, `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD`
+7. Set `POCKETBASE_URL`, `POCKETBASE_ADMIN_EMAIL`, `POCKETBASE_ADMIN_PASSWORD`
    in `.env.local`.
 
 ## 1. Install
@@ -190,13 +205,28 @@ Then in the console, set the **Webhook URL** (Messaging API tab) to
 
 ## 5. Rich menu (the "New Item / Inventory" buttons)
 
+`scripts/rich-menu-en.png` and `scripts/rich-menu-ja.png` are already in
+the repo. To change the wording, colors, or icons, edit
+`scripts/generate-rich-menu-images.mjs` and run
+`npm run generate-rich-menu-images` — it renders both PNGs from an SVG
+definition rather than needing an image editor. Or replace the PNGs
+directly with your own artwork if you'd rather design them by hand; they
+just need to stay exactly 2500×843.
+
 ```bash
-# put a 2500x843px PNG at scripts/rich-menu.png first
 LINE_CHANNEL_ACCESS_TOKEN=xxx NEXT_PUBLIC_LIFF_ID=xxx npm run setup-rich-menu
 ```
 
+This creates both menus, uploads both images, sets the Japanese one as
+the account-wide default, and prints two `richMenuId` values — copy those
+into `.env.local` as `RICH_MENU_ID_EN` / `RICH_MENU_ID_JA` (and into your
+Netlify env vars) so the webhook can link the right one per user. The
+English menu won't actually show up for anyone until those env vars are
+set and deployed — `lib/rich-menu.ts` no-ops quietly if they're missing.
+
 Re-run this any time you change button positions — LINE requires a new
-`richMenuId` per layout, menus aren't editable in place.
+`richMenuId` per layout, menus aren't editable in place. You'll need to
+update the env vars again after re-running, since the ids change.
 
 ## 6. Sales reports
 
@@ -269,10 +299,15 @@ lib/line.ts                  Messaging API client + signature verification
 lib/liff-client.ts           client-side LIFF init / profile hook
 lib/pocketbase.ts            PocketBase client + superuser auth
 lib/staff.ts                 looks up a staff member's store from the staff collection
+lib/bot-lang.ts               resolves a LINE user's language (override > profile > default)
+lib/rich-menu.ts              links the language-appropriate rich menu to a specific user
+lib/user-lang.ts              stores/reads manual language overrides ("English"/"日本語" command)
+lib/i18n.ts                    translation dictionary + t() helper — add new strings here
 lib/pending-photos.ts         create/lookup/delete for photos in transit before an item exists
 lib/db.ts                    data access (listItems, createItem, sellItem, transferItem, periodSummary, etc.)
 lib/messages.ts              LINE message builders — menu, store quick-reply, item carousel, sales report
 lib/schema.ts                shared Zod schema (form + API validate the same shape)
-scripts/setup-rich-menu.mjs  one-time rich menu creation/upload
+scripts/setup-rich-menu.mjs   creates/uploads both language rich menus, sets Japanese default
+scripts/generate-rich-menu-images.mjs  renders rich-menu-en.png / rich-menu-ja.png from SVG
 .github/workflows/weekly-report.yml  scheduled trigger for the sales report
 ```
