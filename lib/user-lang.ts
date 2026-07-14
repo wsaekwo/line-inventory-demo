@@ -11,8 +11,10 @@ import type { Lang } from './i18n';
  *
  * Only written to when someone explicitly types "English" or "日本語" in
  * chat (see app/api/webhook/route.ts) — otherwise language is left to
- * auto-detection (lib/bot-lang.ts) and this collection stays empty for
- * that person.
+ * auto-detection and this collection stays empty for that person. Read
+ * from both the bot (lib/bot-lang.ts) and the LIFF form
+ * (app/api/lang/route.ts), so a manual switch applies everywhere, not
+ * just to chat replies.
  */
 const COLLECTION = 'user_prefs';
 

@@ -17,11 +17,6 @@
 // LINE requires a fresh richMenuId per layout, menus aren't editable in
 // place. Re-running creates new menus; delete the old ones from the
 // console's Rich Menu list afterward if you don't need them.
-import dotenv from 'dotenv';
-
-dotenv.config({
-  path: '.env.local',
-});
 
 import fs from 'fs';
 import path from 'path';

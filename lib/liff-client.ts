@@ -41,12 +41,28 @@ export function useLiff(): LiffState {
           return;
         }
         const profile = await liff.getProfile();
+        const deviceLang = normalizeLang(liff.getLanguage());
+
+        // A manual override (typed "English"/"日本語" to the bot) should
+        // govern the form too, not just chat replies — otherwise someone
+        // who told the bot to switch could open this form and see it
+        // still in whatever their device happens to be set to, which
+        // looks like the switch silently didn't work.
+        let lang = deviceLang;
+        try {
+          const res = await fetch(`/api/lang?lineUserId=${encodeURIComponent(profile.userId)}`);
+          const data = await res.json();
+          if (data.lang === 'en' || data.lang === 'ja') lang = data.lang;
+        } catch {
+          // No override reachable — fall back to the device language, still set above.
+        }
+
         setState({
           ready: true,
           error: null,
           userId: profile.userId,
           displayName: profile.displayName,
-          lang: normalizeLang(liff.getLanguage()),
+          lang,
         });
       })
       .catch((err) => {
